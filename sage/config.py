@@ -23,6 +23,9 @@ WAKE_WORD = os.getenv("SAGE_WAKE_WORD", "sage")
 HA_TOKEN = os.getenv("SAGE_HA_TOKEN", "")
 SHORTCUT_TOKEN = os.getenv("SAGE_SHORTCUT_TOKEN", "")
 TELEGRAM_BOT_TOKEN = os.getenv("SAGE_TELEGRAM_BOT_TOKEN", "")
+OCTOPRINT_URL = os.getenv("SAGE_OCTOPRINT_URL", "").strip()
+OCTOPRINT_API_KEY = os.getenv("SAGE_OCTOPRINT_API_KEY", "").strip()
+OCTOPRINT_STORAGE = os.getenv("SAGE_OCTOPRINT_STORAGE", "local").strip().lower()
 ALLOWED_CLIENT_IPS = {item.strip() for item in os.getenv("SAGE_ALLOWED_CLIENT_IPS", "").split(",") if item.strip()}
 
 # Voice gateway for the ESP32-S3 speaker (see VOICE-GUIDE.md)

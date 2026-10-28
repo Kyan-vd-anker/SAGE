@@ -11,7 +11,7 @@ from math import log
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import config, db, engineering, jobs, memory, plugins, outlook, llm, extra_tools, trust, system_control
+from . import config, db, engineering, jobs, memory, plugins, outlook, llm, extra_tools, trust, system_control, octoprint
 
 
 BUILTINS = [
@@ -25,6 +25,9 @@ BUILTINS = [
     ("save_memory", "Save a durable user preference, fact, project detail, or learned knowledge to Sage memory and the Obsidian vault.", {"type":"object","properties":{"content":{"type":"string"},"kind":{"type":"string","enum":["preference","fact","project","knowledge"]}},"required":["content"]}),
     ("search_workshop_notebook", "Search workshop logs, measurements, reports, failures, calculations, projects, and saved memories.", {"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}),
     ("add_workshop_entry", "Record a workshop observation or build step, optionally with measurements and project id.", {"type":"object","properties":{"note":{"type":"string"},"measurements":{"type":"string"},"project_id":{"type":"integer"}},"required":["note"]}),
+    ("get_printer_status", "Read OctoPrint printer connection, operational/printing/paused state, and available temperatures.", {"type":"object","properties":{}}),
+    ("list_printer_library", "List existing G-code files in the configured OctoPrint local or SD-card library. This does not upload or slice models.", {"type":"object","properties":{"storage":{"type":"string","enum":["local","sdcard"]},"limit":{"type":"integer","minimum":1,"maximum":200}}}),
+    ("print_library_file", "Start an existing G-code file from the OctoPrint library. Use only after the user directly commands Sage to print that named file; no upload, slicing, or model selection.", {"type":"object","properties":{"path":{"type":"string"},"storage":{"type":"string","enum":["local","sdcard"]}},"required":["path"]}),
     ("calculate_engineering", "Calculate a supported engineering formula. Supported operations: ohms_law, power, moment, pressure_force, density, convert. Include all required values and units.", {"type":"object","properties":{"operation":{"type":"string","enum":["ohms_law","power","moment","pressure_force","density","convert"]},"values":{"type":"object"}},"required":["operation","values"]}),
     ("list_inventory", "List workshop parts inventory, quantities, locations, and reorder levels.", {"type":"object","properties":{"query":{"type":"string"}}}),
     ("add_inventory_item", "Add a part to Sage's inventory with quantity, unit, location, supplier, threshold, and optional project.", {"type":"object","properties":{"name":{"type":"string"},"part_number":{"type":"string"},"description":{"type":"string"},"quantity":{"type":"number"},"unit":{"type":"string"},"location":{"type":"string"},"supplier":{"type":"string"},"reorder_level":{"type":"number"},"project_id":{"type":"integer"}},"required":["name"]}),
@@ -161,6 +164,9 @@ def definitions_for_query(query, definitions_list=None, strict=False):
         'save_memory':('remember this','save this','learn this','store in memory'),
         'search_workshop_notebook':('search notes','notebook','workshop history','when did','find in my notes'),
         'add_workshop_entry':('workshop log','log this','record measurement','build note','workshop note'),
+        'get_printer_status':('printer status','octoprint status','printer ready','printer connection','check the printer'),
+        'list_printer_library':('printer library','printer files','octoprint files','what can i print','list gcode','g-code library'),
+        'print_library_file':('print ','print from library','print the file','start printing','send to the printer'),
         'calculate_engineering':('calculate','engineering formula','voltage','current','force','pressure','density'),
         'list_inventory':('inventory','stock','parts','part number','how many'),
         'add_inventory_item':('add part','add to inventory','stock received','new part'),
@@ -362,6 +368,12 @@ def execute(name,args,approved=False,cancel=None):
         events=outlook.upcoming(args.get('days',7))
         db.log_action(name,{'days':args.get('days',7)},'completed',f'Returned {len(events)} Outlook events')
         return events
+    if name=='get_printer_status':
+        return _audit(name,args,octoprint.status())
+    if name=='list_printer_library':
+        return _audit(name,args,octoprint.list_files(args.get('storage'),args.get('limit',100)))
+    if name=='print_library_file':
+        return _audit(name,args,octoprint.start_print(args['path'],args.get('storage')))
     if name=='create_outlook_event':
         result=outlook.create_event(args['title'],args['start'],args['end'],args.get('location',''),args.get('notes',''))
         return _audit(name,args,result)

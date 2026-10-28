@@ -73,6 +73,10 @@ Then open Sage's **System** page, generate a pairing code, and send `/pair CODE`
 
 Quick commands include `/briefing`, `/tasks`, `/next`, `/approvals`, and `/stop`. Approval cards have Approve and Decline buttons. Package installs, Linux commands, and destructive file changes require a second short-lived phrase: approve the card, then send the exact `/confirm ID PHRASE` shown by Sage. Other approvals run on the first explicit approval. Notification controls are `/notifications on|off`, `/notify tasks|reminders|jobs|approvals on|off`, `/quiet 22:00 07:00`, and `/quiet off`; quiet hours use the Sage server's local time. Use `/memory` to inspect active memories, `/memory off` to disable automatic capture from Telegram, `/memory on` to re-enable it, `/remember TEXT` to save one deliberately, and `/forget ID` to archive one. Automatic capture now saves at most one memory per message and ignores transient wants and project plans; saved memory context is limited to strongly relevant matches. The paired chat can also use `/status` and `/unlink`. Only one Telegram chat can be paired at a time. Allow outbound HTTPS access from Kali to `api.telegram.org`.
 
+## OctoPrint and Klipper printer
+
+Sage can check the OctoPrint printer state, list existing G-code in its local or SD-card library, and start a named library file when you directly ask it to print that file. See [OCTOPRINT.md](OCTOPRINT.md) for private API-key setup, supported commands, and operating limits. Sage does not upload files or slice STL/3MF models.
+
 ## Talk to Sage from your phone
 
 Sage includes a phone Talk page: speak into the phone microphone and Sage replies with streamed speech from the Kali PC. Speech recognition uses `faster-whisper`; speech output uses Piper when configured, otherwise `espeak-ng`. The models run on the Sage computer. The phone page needs HTTPS for microphone access, so use Tailscale Serve and keep Sage bound to localhost.
