@@ -1,0 +1,8 @@
+{
+  "name": "workspace_write",
+  "description": "Create or replace a text file inside Sage's isolated coding workspace.",
+  "version": "1.0.0",
+  "permission": "safe",
+  "entrypoint": "workspace_write.py:run",
+  "input_schema": {"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"],"additionalProperties":false}
+}

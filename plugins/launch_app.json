@@ -1,0 +1,8 @@
+{
+  "name": "launch_app",
+  "description": "Launch an application explicitly listed in SAGE_ALLOWED_APPS.",
+  "version": "1.0.0",
+  "permission": "safe",
+  "entrypoint": "launch_app.py:run",
+  "input_schema": {"type":"object","properties":{"app":{"type":"string"}},"required":["app"],"additionalProperties":false}
+}

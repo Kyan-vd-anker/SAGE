@@ -1,0 +1,24 @@
+# Sage wall display settings. Copied to /etc/sage-wall.conf by install.sh.
+# Lines starting with # are ignored. Restart after changes:  sudo systemctl restart sage-wall
+
+# The PC/server running Sage. Use its IP address (give the PC a fixed IP or a DHCP reservation in your router).
+SAGE_URL=http://192.168.1.10:8001
+
+# How often the Pi asks the server for fresh data (seconds).
+POLL_SECONDS=15
+
+# Dim the screen after this many seconds without a touch.
+DIM_AFTER_SECONDS=180
+
+# Between these times the screen shows only a very dim clock. A touch wakes it for NIGHT_WAKE_SECONDS.
+# A pending approval always wakes the screen.
+NIGHT_START=23:00
+NIGHT_END=07:00
+NIGHT_WAKE_SECONDS=45
+
+# Optional: your name for the greeting on the home screen.
+USER_NAME=Kyan
+
+# Optional: full path to a .ttf font (default: DejaVu Sans).
+#FONT=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+

@@ -1,0 +1,11 @@
+{
+  "name": "export_plugin",
+  "description": "export plugin \u2014 The user explicitly asked for a plugin to make LaTeX documents.",
+  "version": "0.1.0",
+  "permission": "confirm",
+  "input_schema": {
+    "type": "object",
+    "properties": {}
+  },
+  "entrypoint": "export_plugin.py:run"
+}

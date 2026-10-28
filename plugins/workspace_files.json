@@ -1,0 +1,8 @@
+{
+  "name": "workspace_files",
+  "description": "List and read files inside Sage's isolated coding workspace.",
+  "version": "1.0.0",
+  "permission": "safe",
+  "entrypoint": "workspace_files.py:run",
+  "input_schema": {"type":"object","properties":{"action":{"type":"string","enum":["list","read"]},"path":{"type":"string"}},"required":["action"],"additionalProperties":false}
+}

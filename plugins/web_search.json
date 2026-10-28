@@ -1,0 +1,8 @@
+{
+  "name": "web_search",
+  "description": "Search the public web, summarize returned source material, and include source links. The search query is sent to Bing.",
+  "version": "1.0.0",
+  "permission": "safe",
+  "entrypoint": "web_search.py:run",
+  "input_schema": {"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}
+}
