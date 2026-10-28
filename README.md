@@ -77,6 +77,10 @@ Quick commands include `/briefing`, `/tasks`, `/next`, `/approvals`, and `/stop`
 
 Sage can check the OctoPrint printer state, list existing G-code in its local or SD-card library, and start a named library file when you directly ask it to print that file. See [OCTOPRINT.md](OCTOPRINT.md) for private API-key setup, supported commands, and operating limits. Sage does not upload files or slice STL/3MF models.
 
+## Outlook email, calendar, and local file search
+
+The Microsoft Graph connection can search email previews, prepare an inbox brief, and save reply drafts without sending them. Sage can also search upcoming calendar events and search readable text in configured local folders. See [EMAIL-AND-FILES.md](EMAIL-AND-FILES.md) for Graph permissions, file-root configuration, privacy boundaries, and example requests.
+
 ## Talk to Sage from your phone
 
 Sage includes a phone Talk page: speak into the phone microphone and Sage replies with streamed speech from the Kali PC. Speech recognition uses `faster-whisper`; speech output uses Piper when configured, otherwise `espeak-ng`. The models run on the Sage computer. The phone page needs HTTPS for microphone access, so use Tailscale Serve and keep Sage bound to localhost.

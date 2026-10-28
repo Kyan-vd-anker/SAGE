@@ -11,12 +11,18 @@ from math import log
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import config, db, engineering, jobs, memory, plugins, outlook, llm, extra_tools, trust, system_control, octoprint
+from . import config, db, engineering, jobs, memory, plugins, outlook, llm, extra_tools, trust, system_control, octoprint, file_search
 
 
 BUILTINS = [
-    ("get_outlook_calendar", "Read the connected Outlook calendar for a specified number of days (1–14). Use this when asked about today's agenda, meetings, availability, or planning around appointments. Calendar data is private; fetch only the needed range.", {"type":"object","properties":{"days":{"type":"integer","minimum":1,"maximum":14}}}),
+    ("get_outlook_calendar", "Read the connected Outlook calendar for a specified number of days (1–90). Use this for agenda, availability, upcoming meetings, or schedule planning. Calendar data is private; fetch only the needed range.", {"type":"object","properties":{"days":{"type":"integer","minimum":1,"maximum":90}}}),
+    ("search_calendar_events", "Find upcoming connected Outlook calendar events by words in the title or location (up to 365 days). Use for requests to find a named event, trip, appointment, or event at a location.", {"type":"object","properties":{"query":{"type":"string"},"days":{"type":"integer","minimum":1,"maximum":365}},"required":["query"]}),
     ("create_outlook_event", "Create an event in the connected Outlook calendar after the user approves the confirmation. Provide ISO 8601 start and end times with timezone offsets. Sage checks for conflicts first.", {"type":"object","properties":{"title":{"type":"string"},"start":{"type":"string"},"end":{"type":"string"},"location":{"type":"string"},"notes":{"type":"string"}},"required":["title","start","end"]}, 'confirm'),
+    ("search_emails", "Search the connected Outlook mailbox for a sender, subject, or phrase. Returns sender, date, subject, and a short message preview so Sage can summarize relevant results. Email contents are private; never save them as memory.", {"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":25}},"required":["query"]}),
+    ("inbox_brief", "Summarize a bounded list of the newest unread messages in the connected Outlook inbox. Returns only short previews; email contents are private and must not be saved as memory.", {"type":"object","properties":{"limit":{"type":"integer","minimum":1,"maximum":25}}}),
+    ("latest_emails", "Read a bounded list of the newest inbox messages whether read or unread, for requests about the latest or most recent email. Returns short previews only; never save email contents as memory.", {"type":"object","properties":{"limit":{"type":"integer","minimum":1,"maximum":15}}}),
+    ("draft_email_reply", "Create an Outlook reply draft to a message returned by search_emails or inbox_brief. Saves in Drafts and never sends. Use only when the user asks for a draft/reply; do not invent personal commitments or facts.", {"type":"object","properties":{"message_id":{"type":"string"},"reply_text":{"type":"string"}},"required":["message_id","reply_text"]}),
+    ("search_user_files", "Search names and readable text in Sage's configured local document folders. Returns matching paths and short snippets only; it does not open or change files. Never search credential-like files.", {"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":50}},"required":["query"]}),
     ("list_projects", "List Sage projects with their tasks and current status.", {"type":"object","properties":{}}),
     ("create_project", "Create a project with a goal, next action, and optional first tasks.", {"type":"object","properties":{"name":{"type":"string"},"description":{"type":"string"},"next_action":{"type":"string"},"tasks":{"type":"array","items":{"type":"string"}}},"required":["name"]}),
     ("add_project_task", "Add a task to an existing Sage project.", {"type":"object","properties":{"project_id":{"type":"integer"},"title":{"type":"string"},"description":{"type":"string"},"priority":{"type":"string","enum":["low","medium","high"]}},"required":["project_id","title"]}),
@@ -150,7 +156,13 @@ def definitions_for_query(query, definitions_list=None, strict=False):
     text=str(query).lower()
     triggers={
         'get_outlook_calendar':('outlook','calendar','agenda','availability','free time','meeting','appointment','my day','plan my day','what do i have','schedule'),
+        'search_calendar_events':('find an event','search calendar','find on my calendar','when is the','when are the','which day is','calendar event called','appointment called'),
         'create_outlook_event':('put that in my calendar','add to my calendar','schedule a meeting','book a time','create a calendar event'),
+        'search_emails':('search email','search emails','find email','find emails','look through my email','email about','mail from','message from','search my inbox'),
+        'inbox_brief':('inbox brief','summarize my inbox','summarize my emails','unread emails','unread mail','new emails','check my inbox','important emails'),
+        'latest_emails':('latest email','latest emails','most recent email','last email','newest email'),
+        'draft_email_reply':('draft a reply','write a reply','reply to this email','reply to that email','prepare a reply','respond to this email'),
+        'search_user_files':('find a file','find files','search files','search my files','search documents','find a document','look for a document','find in my documents'),
         'calculator':('calculate','compute','math','plus','minus','times','voltage','current','resistance','force','pressure','density','convert'),
         'web_search':('search online','search the web','look up','browse','latest','current information','find online','research'),
         'workspace_files':('workspace file','read file','list files','show file'),
@@ -209,6 +221,29 @@ def definitions_for_query(query, definitions_list=None, strict=False):
     always={'web_search','search_memory','search_workshop_notebook','list_projects','list_inventory'}
     explicit=set(explicit_tool_names(query))
     selected=[]
+    # Resolve common goal phrases before the model sees tool definitions. This reduces
+    # ambiguity between reading/searching, summarizing, drafting, and changing data.
+    email_domain = bool(re.search(r'\b(?:email|emails|mail|inbox|message|messages)\b', text))
+    if email_domain:
+        local_email_content = re.search(r'\b(?:this|that|attached|below)\s+(?:email|message)\b', text)
+        if re.search(r'\b(?:inbox brief|unread|brief me|check my inbox|important emails|summari[sz]e my inbox|summari[sz]e my emails)\b', text):
+            explicit.add('inbox_brief')
+        if re.search(r'\b(?:latest|most recent|last|newest)\s+(?:email|message)s?\b', text):
+            explicit.add('latest_emails')
+        if re.search(r'\b(?:draft|write|prepare|reply|respond)\b', text) and re.search(r'\b(?:reply|respond|email|mail|message)\b', text):
+            explicit.add('draft_email_reply')
+        if re.search(r'\b(?:search|find|look for|from|subject|about|which|what did|show me)\b', text):
+            explicit.add('search_emails')
+        if local_email_content and 'draft_email_reply' not in explicit and not re.search(r'\b(?:search|find|look for)\b', text):
+            explicit.difference_update({'inbox_brief','latest_emails','search_emails'})
+        if 'search_emails' in explicit and re.search(r'\b(?:from|subject|about|containing|with the phrase)\b', text) and not re.search(r'\b(?:unread|inbox brief|newest unread)\b', text):
+            explicit.difference_update({'inbox_brief','latest_emails'})
+        if not local_email_content and not any(name in explicit for name in ('inbox_brief','latest_emails','draft_email_reply','search_emails')):
+            explicit.update(('search_emails','inbox_brief'))
+    if re.search(r'\b(?:find|search|look for)\b.{0,45}\b(?:file|files|document|documents|pdf|spreadsheet|note)\b|\b(?:file|document)\s+search\b', text):
+        explicit.add('search_user_files')
+    if re.search(r'\b(?:find|search|when is|when are|which day|where is)\b.{0,50}\b(?:calendar|event|appointment|meeting|trip|holiday)\b', text):
+        explicit.add('search_calendar_events')
     for item in catalog:
         name=item.get('function',{}).get('name','')
         if (name in always and not strict) or name in explicit or _mentions(_name_terms(name),text) or any(term in text for term in triggers.get(name,())):selected.append(item)
@@ -368,6 +403,28 @@ def execute(name,args,approved=False,cancel=None):
         events=outlook.upcoming(args.get('days',7))
         db.log_action(name,{'days':args.get('days',7)},'completed',f'Returned {len(events)} Outlook events')
         return events
+    if name=='search_calendar_events':
+        return outlook.search_events(args['query'],args.get('days',90))
+    if name=='search_emails':
+        result=outlook.search_emails(args['query'],args.get('limit',10))
+        db.log_action(name,{'query':'[private query omitted]','limit':args.get('limit',10)},'completed',f"Returned {len(result['messages'])} matching message previews; email content omitted")
+        return result
+    if name=='inbox_brief':
+        result=outlook.inbox_brief(args.get('limit',12))
+        db.log_action(name,{'limit':args.get('limit',12)},'completed',f"Returned {result['count']} unread message previews; email content omitted")
+        return result
+    if name=='latest_emails':
+        result=outlook.latest_emails(args.get('limit',5))
+        db.log_action(name,{'limit':args.get('limit',5)},'completed',f"Returned {result['count']} recent message previews; email content omitted")
+        return result
+    if name=='draft_email_reply':
+        result=outlook.draft_email_reply(args['message_id'],args['reply_text'])
+        db.log_action(name,{'message_id':'[private id omitted]','reply_text':'[private draft omitted]'},'completed','Reply draft saved in Outlook; not sent')
+        return result
+    if name=='search_user_files':
+        result=file_search.search_files(args['query'],args.get('limit',20))
+        db.log_action(name,{'query':'[private query omitted]','limit':args.get('limit',20)},'completed',f"Returned {len(result['results'])} matching text-file snippets; file content omitted")
+        return result
     if name=='get_printer_status':
         return _audit(name,args,octoprint.status())
     if name=='list_printer_library':

@@ -4,6 +4,13 @@ All notable changes to SAGE are documented here. Version numbers follow `MAJOR.M
 
 ## Unreleased
 
+## 2.4.0 - 2026-10-28
+
+- Add Outlook email search, unread inbox briefs, and reply drafts that are saved but never sent.
+- Extend calendar search and add bounded, read-only search across configured local document folders.
+- Improve intent-based tool selection and guard email draft creation behind a direct request.
+- Document Microsoft Graph permissions, reauthorization, file roots, and private-data handling.
+
 ## 2.3.0 - 2026-10-28
 
 - Add OctoPrint printer status, library browsing, and direct printing of existing G-code files.

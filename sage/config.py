@@ -26,6 +26,7 @@ TELEGRAM_BOT_TOKEN = os.getenv("SAGE_TELEGRAM_BOT_TOKEN", "")
 OCTOPRINT_URL = os.getenv("SAGE_OCTOPRINT_URL", "").strip()
 OCTOPRINT_API_KEY = os.getenv("SAGE_OCTOPRINT_API_KEY", "").strip()
 OCTOPRINT_STORAGE = os.getenv("SAGE_OCTOPRINT_STORAGE", "local").strip().lower()
+FILE_SEARCH_ROOTS = os.getenv("SAGE_FILE_SEARCH_ROOTS", "")
 ALLOWED_CLIENT_IPS = {item.strip() for item in os.getenv("SAGE_ALLOWED_CLIENT_IPS", "").split(",") if item.strip()}
 
 # Voice gateway for the ESP32-S3 speaker (see VOICE-GUIDE.md)

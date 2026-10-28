@@ -10,13 +10,13 @@ import time
 from datetime import date, datetime, time as datetime_time, timedelta, timezone
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 from . import config, db
 
 GRAPH = 'https://graph.microsoft.com/v1.0'
-SCOPES = 'offline_access User.Read Calendars.ReadWrite'
+SCOPES = 'offline_access User.Read Calendars.ReadWrite Mail.ReadWrite'
 ICS_HOSTS = {'outlook.live.com', 'outlook.office365.com', 'outlook.office.com'}
 ICS_MAX_BYTES = 2 * 1024 * 1024
 _flow_lock = threading.RLock()
@@ -380,8 +380,8 @@ def _post_form(url, fields):
 
 def begin_device_flow(client_id, tenant='common'):
     global _device_flow
-    client_id = str(client_id).strip()
-    tenant = str(tenant).strip() or 'common'
+    client_id = str(client_id or _setting('client_id')).strip()
+    tenant = str(tenant or _setting('tenant') or 'common').strip()
     if not re.fullmatch(r'[0-9a-fA-F-]{36}', client_id):
         raise ValueError('Enter the Application (client) ID from your Microsoft app registration.')
     if not re.fullmatch(r'[A-Za-z0-9.-]{1,100}', tenant):
@@ -458,9 +458,12 @@ def poll_device_flow():
 
 
 def _refresh(token):
+    # Refresh only permissions this token already has. Adding Mail.ReadWrite needs a
+    # visible device-code sign-in, not a silent scope expansion or a broken refresh.
+    refresh_scope = str(token.get('scope') or 'offline_access User.Read Calendars.ReadWrite')
     refreshed = _post_form(f"https://login.microsoftonline.com/{token['tenant']}/oauth2/v2.0/token", {
         'grant_type': 'refresh_token', 'client_id': token['client_id'],
-        'refresh_token': token['refresh_token'], 'scope': SCOPES,
+        'refresh_token': token['refresh_token'], 'scope': refresh_scope,
     })
     if refreshed.get('error'):
         disconnect()
@@ -483,6 +486,8 @@ def _graph_request(path_or_url, method='GET', body=None, token=None, retry=True)
     url = path_or_url if path_or_url.startswith('https://') else GRAPH + path_or_url
     data = json.dumps(body, ensure_ascii=False).encode('utf-8') if body is not None else None
     headers = {'Authorization': 'Bearer ' + token['access_token'], 'Accept': 'application/json', 'Prefer': 'outlook.timezone="UTC"'}
+    if '$search=' in url or '%24search=' in url.casefold():
+        headers['ConsistencyLevel'] = 'eventual'
     if data is not None:
         headers['Content-Type'] = 'application/json'
     request = Request(url, data=data, headers=headers, method=method)
@@ -500,6 +505,8 @@ def _graph_request(path_or_url, method='GET', body=None, token=None, retry=True)
         if exc.code == 401:
             disconnect()
             raise PermissionError('Outlook authorization expired. Reconnect your calendar in Sage.') from exc
+        if exc.code == 403:
+            raise PermissionError(f'Microsoft Graph denied this request: {message[:400]}. If this is an email action, reconnect Outlook and grant Mail.ReadWrite.') from exc
         raise ValueError(f'Microsoft Graph returned {exc.code}: {message[:500]}') from exc
     except (URLError, TimeoutError) as exc:
         raise ConnectionError(f'Could not reach Microsoft Graph: {exc}') from exc
@@ -510,7 +517,11 @@ def status():
     ics_connected = bool(_load_ics_url())
     graph_connected = bool(token)
     source = 'ics' if ics_connected else 'graph' if graph_connected else ''
-    return {'connected': graph_connected, 'graph_connected': graph_connected, 'ics_connected': ics_connected,
+    granted = set(str((token or {}).get('scope', '')).split())
+    mail_connected = bool({'Mail.ReadWrite', 'Mail.Read'} & granted)
+    mail_drafts_connected = 'Mail.ReadWrite' in granted
+    return {'connected': graph_connected, 'graph_connected': graph_connected, 'mail_connected': mail_connected,
+            'mail_drafts_connected': mail_drafts_connected, 'ics_connected': ics_connected,
             'calendar_connected': graph_connected or ics_connected, 'source': source,
             'account': (token or {}).get('account', ''), 'tenant': _setting('tenant', 'common'),
             'client_id_configured': bool(_setting('client_id')), 'token_storage': 'Windows DPAPI' if os.name == 'nt' else 'local file permissions'}
@@ -563,9 +574,98 @@ def _graph_events_between(start, end):
 
 
 def upcoming(days=7):
-    days = max(1, min(14, int(days)))
+    days = max(1, min(90, int(days)))
     now = datetime.now().astimezone()
     return events_between(now, now + timedelta(days=days))
+
+
+def search_events(query, days=90):
+    terms = [term.casefold() for term in re.findall(r'[^\W_]+', str(query or ''), re.UNICODE) if len(term) > 1]
+    if not terms:
+        raise ValueError('Give a word or phrase to find in calendar event titles or locations.')
+    days = max(1, min(365, int(days)))
+    now = datetime.now().astimezone()
+    events = events_between(now, now + timedelta(days=days))
+    matches = [event for event in events if all(term in (event.get('subject', '') + ' ' + event.get('location', '')).casefold() for term in terms)]
+    return {'query': str(query)[:160], 'days': days, 'count': len(matches), 'events': matches[:50]}
+
+
+def _mail_message(item):
+    sender = (item.get('from') or {}).get('emailAddress') or {}
+    return {'id': item.get('id', ''), 'subject': str(item.get('subject') or '(No subject)')[:300],
+            'from': str(sender.get('name') or sender.get('address') or 'Unknown sender')[:240],
+            'received': item.get('receivedDateTime', ''), 'is_read': bool(item.get('isRead')),
+            'preview': str(item.get('bodyPreview') or '')[:900], 'web_link': item.get('webLink', '')}
+
+
+def _mail_list(path):
+    if not _load_token():
+        raise PermissionError('Connect Outlook with Microsoft Graph and grant Mail.ReadWrite in Sage’s briefing page to use email tools.')
+    result = _graph_request(path)
+    return [_mail_message(item) for item in result.get('value', []) if isinstance(item, dict)]
+
+
+def search_emails(query, limit=10):
+    query = re.sub(r'\s+', ' ', str(query or '')).strip()[:180]
+    if not query:
+        raise ValueError('Give a sender, subject, or phrase to search for.')
+    limit = max(1, min(25, int(limit)))
+    # Graph $search supports words/phrases over Outlook message fields. Escape the quoted expression.
+    expression = '"' + query.replace('\\', '\\\\').replace('"', '\\"') + '"'
+    params = urlencode({'$search': expression, '$top': str(limit), '$select': 'id,subject,from,receivedDateTime,isRead,bodyPreview,webLink'})
+    return {'query': query, 'messages': _mail_list('/me/messages?' + params)}
+
+
+def inbox_brief(limit=12):
+    limit = max(1, min(25, int(limit)))
+    params = urlencode({'$filter': 'isRead eq false', '$orderby': 'receivedDateTime desc', '$top': str(limit),
+                        '$select': 'id,subject,from,receivedDateTime,isRead,bodyPreview,webLink'})
+    messages = _mail_list('/me/mailFolders/inbox/messages?' + params)
+    return {'count': len(messages), 'unread_messages': messages}
+
+
+def latest_emails(limit=5):
+    limit = max(1, min(15, int(limit)))
+    params = urlencode({'$orderby': 'receivedDateTime desc', '$top': str(limit),
+                        '$select': 'id,subject,from,receivedDateTime,isRead,bodyPreview,webLink'})
+    messages = _mail_list('/me/mailFolders/inbox/messages?' + params)
+    return {'count': len(messages), 'messages': messages}
+
+
+def draft_email_reply(message_id, reply_text):
+    message_id = str(message_id or '').strip()
+    reply_text = str(reply_text or '').strip()
+    if not message_id or len(message_id) > 1000:
+        raise ValueError('Choose a message from Sage’s email search results.')
+    if not reply_text:
+        raise ValueError('The reply draft cannot be empty.')
+    if len(reply_text) > 12000:
+        raise ValueError('Keep the reply draft under 12,000 characters.')
+    if not _load_token():
+        raise PermissionError('Connect Outlook with Microsoft Graph and grant Mail.ReadWrite in Sage’s briefing page to create reply drafts.')
+    encoded_id = quote(message_id, safe='')
+    created = _graph_request(f'/me/messages/{encoded_id}/createReply', method='POST', body={})
+    draft_id = str(created.get('id') or '')
+    if not draft_id:
+        raise ValueError('Microsoft Graph did not return the reply draft id; Sage did not send an email.')
+    draft_body = created.get('body') if isinstance(created.get('body'), dict) else {}
+    content_type = draft_body.get('contentType') if draft_body.get('contentType') in ('Text', 'HTML') else 'Text'
+    original = str(draft_body.get('content') or '')
+    if content_type == 'HTML':
+        import html
+        content = '<p>' + '<br>'.join(html.escape(line) for line in reply_text.splitlines()) + '</p><br>' + original
+    else:
+        content = reply_text + ('\n\n' + original if original else '')
+    encoded_draft_id = quote(draft_id, safe='')
+    saved = _graph_request(f'/me/messages/{encoded_draft_id}', method='PATCH', body={'body': {'contentType': content_type, 'content': content}})
+    return {'draft_created': True, 'sent': False, 'message_id': draft_id,
+            'subject': str(saved.get('subject') or created.get('subject') or '(Reply draft)'),
+            'message': 'Reply saved in Outlook Drafts. It has not been sent.'}
+
+
+def explicit_email_draft_request(message):
+    text = str(message or '').strip()
+    return bool(re.search(r"(?i)^\s*(?:(?:sage|hey sage)[,:]?\s*)?(?:(?:please\s+)?(?:can|could) you\s+)?(?:please\s+)?(?:draft|write|prepare)\s+(?:me\s+)?(?:a\s+)?(?:reply|response)\b|^\s*(?:(?:please\s+)?(?:can|could) you\s+)?(?:please\s+)?(?:reply|respond)\s+to\s+(?:that|this|the|my|message|email|an?\b)", text))
 
 
 def create_event(title, start, end, location='', notes=''):
