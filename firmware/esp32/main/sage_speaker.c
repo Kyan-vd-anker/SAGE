@@ -11,8 +11,10 @@
 #include "esp_check.h"
 #include "esp_event.h"
 #include "esp_http_client.h"
+#include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_random.h"
 #include "esp_sntp.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
@@ -21,7 +23,9 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "mbedtls/md.h"
+#include "mbedtls/base64.h"
 #include "nvs_flash.h"
+#include "lwip/inet.h"
 #include "esp_afe_config.h"
 #include "esp_afe_sr_iface.h"
 #include "esp_vad.h"
@@ -45,6 +49,8 @@ static SemaphoreHandle_t audio_stream_mutex;
 static volatile bool speaker_active;
 static volatile int64_t followup_until_ms;
 static volatile int64_t suppress_wake_until_ms;
+static char sage_server_ip[16];
+static char setup_csrf_token[33];
 static int16_t *capture_pcm;
 static int16_t playback_samples[1024];
 static uint8_t pcm_carry;
@@ -72,6 +78,9 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
         esp_wifi_connect();
         xEventGroupClearBits(wifi_events, WIFI_CONNECTED_BIT);
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
+        const ip_event_got_ip_t *event = data;
+        ESP_LOGI(TAG, "Connected to Wi-Fi; setup page: http://" IPSTR "/",
+                 IP2STR(&event->ip_info.ip));
         xEventGroupSetBits(wifi_events, WIFI_CONNECTED_BIT);
     }
 }
@@ -227,7 +236,7 @@ static esp_http_client_handle_t new_client(const char *path, const char *method,
                                            bool post_audio, http_audio_context_t *audio)
 {
     char url[192];
-    snprintf(url, sizeof(url), "http://%s:%d%s", CONFIG_SAGE_VOICE_HOST,
+    snprintf(url, sizeof(url), "http://%s:%d%s", sage_server_ip,
              CONFIG_SAGE_VOICE_PORT, path);
     const esp_http_client_config_t config = {
         .url = url,
@@ -290,6 +299,194 @@ static int perform_request(const char *path, const char *method, const uint8_t *
         xSemaphoreGive(audio_stream_mutex);
     }
     return status;
+}
+
+static bool setup_authorized(httpd_req_t *request)
+{
+    char authorization[192];
+    char credentials[96];
+    char expected[160];
+    size_t encoded_size = 0;
+    size_t secret_size = strlen(CONFIG_SAGE_CONFIG_PASSWORD);
+    if (secret_size == 0 || secret_size > 64 ||
+        httpd_req_get_hdr_value_len(request, "Authorization") >= sizeof(authorization) ||
+        httpd_req_get_hdr_value_str(request, "Authorization", authorization,
+                                    sizeof(authorization)) != ESP_OK) {
+        return false;
+    }
+
+    int credentials_size = snprintf(credentials, sizeof(credentials), "sage:%s",
+                                    CONFIG_SAGE_CONFIG_PASSWORD);
+    if (credentials_size < 0 || (size_t)credentials_size >= sizeof(credentials) ||
+        mbedtls_base64_encode((unsigned char *)expected, sizeof(expected), &encoded_size,
+                              (const unsigned char *)credentials,
+                              (size_t)credentials_size) != 0 ||
+        encoded_size + sizeof("Basic ") > sizeof(authorization)) {
+        return false;
+    }
+    memmove(expected + sizeof("Basic ") - 1, expected, encoded_size);
+    memcpy(expected, "Basic ", sizeof("Basic ") - 1);
+    expected[encoded_size + sizeof("Basic ") - 1] = '\0';
+    return strcmp(authorization, expected) == 0;
+}
+
+static esp_err_t require_setup_auth(httpd_req_t *request)
+{
+    if (setup_authorized(request)) {
+        return ESP_OK;
+    }
+    httpd_resp_set_status(request, "401 Unauthorized");
+    httpd_resp_set_type(request, "text/plain");
+    httpd_resp_set_hdr(request, "WWW-Authenticate",
+                       "Basic realm=\"Sage speaker setup\", charset=\"UTF-8\"");
+    httpd_resp_sendstr(request, "Setup password required.");
+    return ESP_FAIL;
+}
+
+static esp_err_t setup_page_handler(httpd_req_t *request)
+{
+    if (require_setup_auth(request) != ESP_OK) {
+        return ESP_OK;
+    }
+    char page[1024];
+    int length = snprintf(
+        page, sizeof(page),
+        "<!doctype html><html lang=\"en\"><meta name=\"viewport\" "
+        "content=\"width=device-width,initial-scale=1\"><title>Sage speaker setup</title>"
+        "<body style=\"font:16px sans-serif;max-width:36em;margin:3em auto;padding:0 1em\">"
+        "<h1>Sage speaker setup</h1><p>Current Sage server: <strong>%s</strong></p>"
+        "<form action=\"/save\" method=\"post\"><input type=\"hidden\" name=\"csrf\" value=\"%s\">"
+        "<label for=\"ip\">Sage server IPv4 address</label>"
+        "<p><input id=\"ip\" name=\"ip\" type=\"text\" inputmode=\"decimal\" "
+        "pattern=\"[0-9.]{7,15}\" required value=\"%s\" "
+        "style=\"font:inherit;width:100%%;box-sizing:border-box;padding:.6em\"></p>"
+        "<button style=\"font:inherit;padding:.6em 1em\">Save and restart speaker</button></form>"
+        "<p>Use the Sage PC's local network IP, not 127.0.0.1. "
+        "The speaker restarts after saving.</p></body></html>",
+        sage_server_ip, setup_csrf_token, sage_server_ip);
+    if (length < 0 || (size_t)length >= sizeof(page)) {
+        httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR,
+                            "Could not render setup page");
+        return ESP_FAIL;
+    }
+    httpd_resp_set_type(request, "text/html; charset=utf-8");
+    return httpd_resp_send(request, page, (ssize_t)length);
+}
+
+static esp_err_t setup_save_handler(httpd_req_t *request)
+{
+    if (require_setup_auth(request) != ESP_OK) {
+        return ESP_OK;
+    }
+    if (request->content_len <= 0 || request->content_len >= 64) {
+        httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "Invalid form size");
+        return ESP_FAIL;
+    }
+
+    char form[64];
+    size_t received = 0;
+    while (received < (size_t)request->content_len) {
+        int count = httpd_req_recv(request, form + received,
+                                   (size_t)request->content_len - received);
+        if (count <= 0) {
+            httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "Could not read form");
+            return ESP_FAIL;
+        }
+        received += (size_t)count;
+    }
+    form[received] = '\0';
+
+    char new_ip[16];
+    char csrf_token[sizeof(setup_csrf_token)];
+    ip4_addr_t parsed_ip;
+    if (httpd_query_key_value(form, "csrf", csrf_token, sizeof(csrf_token)) != ESP_OK ||
+        strcmp(csrf_token, setup_csrf_token) != 0 ||
+        httpd_query_key_value(form, "ip", new_ip, sizeof(new_ip)) != ESP_OK ||
+        !ip4addr_aton(new_ip, &parsed_ip)) {
+        httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "Enter a valid IPv4 address");
+        return ESP_FAIL;
+    }
+
+    nvs_handle_t settings;
+    esp_err_t err = nvs_open("sage_cfg", NVS_READWRITE, &settings);
+    if (err == ESP_OK) {
+        err = nvs_set_str(settings, "server_ip", new_ip);
+        if (err == ESP_OK) {
+            err = nvs_commit(settings);
+        }
+        nvs_close(settings);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Could not save Sage server IP: %s", esp_err_to_name(err));
+        httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR,
+                            "Could not save the Sage server address");
+        return ESP_FAIL;
+    }
+
+    httpd_resp_set_type(request, "text/html; charset=utf-8");
+    httpd_resp_sendstr(request,
+                       "<!doctype html><html><meta name=\"viewport\" "
+                       "content=\"width=device-width,initial-scale=1\"><title>Saved</title>"
+                       "<body style=\"font:16px sans-serif;max-width:36em;margin:3em auto\">"
+                       "<h1>Address saved</h1><p>The speaker is restarting. "
+                       "Reconnect to its setup page in a few seconds.</p></body></html>");
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    esp_restart();
+    return ESP_OK;
+}
+
+static void setup_server_start(void)
+{
+    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    config.server_port = 80;
+    httpd_handle_t server = NULL;
+    check(httpd_start(&server, &config), "setup web server");
+
+    const httpd_uri_t page = {
+        .uri = "/",
+        .method = HTTP_GET,
+        .handler = setup_page_handler,
+    };
+    const httpd_uri_t save = {
+        .uri = "/save",
+        .method = HTTP_POST,
+        .handler = setup_save_handler,
+    };
+    uint8_t csrf_random[16];
+    esp_fill_random(csrf_random, sizeof(csrf_random));
+    bytes_to_hex(csrf_random, sizeof(csrf_random), setup_csrf_token);
+    check(httpd_register_uri_handler(server, &page), "setup page route");
+    check(httpd_register_uri_handler(server, &save), "setup save route");
+}
+
+static void load_server_ip(void)
+{
+    strlcpy(sage_server_ip, CONFIG_SAGE_VOICE_HOST, sizeof(sage_server_ip));
+    ip4_addr_t parsed_ip;
+    if (!ip4addr_aton(sage_server_ip, &parsed_ip)) {
+        ESP_LOGE(TAG, "Configured Sage server address is not a valid IPv4 address");
+        abort();
+    }
+
+    nvs_handle_t settings;
+    esp_err_t err = nvs_open("sage_cfg", NVS_READONLY, &settings);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        return;
+    }
+    check(err, "open saved Sage server address");
+
+    size_t length = sizeof(sage_server_ip);
+    err = nvs_get_str(settings, "server_ip", sage_server_ip, &length);
+    nvs_close(settings);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        strlcpy(sage_server_ip, CONFIG_SAGE_VOICE_HOST, sizeof(sage_server_ip));
+        return;
+    }
+    check(err, "read saved Sage server address");
+    if (!ip4addr_aton(sage_server_ip, &parsed_ip)) {
+        ESP_LOGE(TAG, "Saved Sage server address is invalid; erase NVS and reconfigure");
+        abort();
+    }
 }
 
 static void report_ring(const char *state)
@@ -510,11 +707,13 @@ void app_main(void)
         err = nvs_flash_init();
     }
     check(err, "NVS init");
-    if (!CONFIG_SAGE_WIFI_SSID[0] || !CONFIG_SAGE_VOICE_SECRET[0]) {
-        ESP_LOGE(TAG, "Set Wi-Fi credentials and the Sage HMAC secret in menuconfig");
+    if (!CONFIG_SAGE_WIFI_SSID[0] || !CONFIG_SAGE_VOICE_SECRET[0] ||
+        !CONFIG_SAGE_CONFIG_PASSWORD[0] || strlen(CONFIG_SAGE_CONFIG_PASSWORD) > 64) {
+        ESP_LOGE(TAG, "Set Wi-Fi credentials, HMAC secret, and a setup password (max 64 chars) in menuconfig");
         abort();
     }
 
+    load_server_ip();
     audio_stream_mutex = xSemaphoreCreateMutex();
     if (!audio_stream_mutex) {
         ESP_LOGE(TAG, "Could not create audio stream mutex");
@@ -522,6 +721,7 @@ void app_main(void)
     }
     check(board_audio_init(), "Audio board init");
     wifi_start();
+    setup_server_start();
     clock_start();
     wake_engine_start();
     xTaskCreatePinnedToCore(audio_task, "sage-audio", 8192, NULL, 8, NULL, 1);

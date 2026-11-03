@@ -17,6 +17,12 @@ config SAGE_VOICE_SECRET
     help
         Use the same random secret as SAGE_VOICE_SECRET on the Sage PC.
 
+config SAGE_CONFIG_PASSWORD
+    string "Speaker setup page password"
+    default ""
+    help
+        Password required to change the Sage server address from the local setup page.
+
 config SAGE_WIFI_SSID
     string "Wi-Fi SSID"
     default ""

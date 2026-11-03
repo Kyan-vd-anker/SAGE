@@ -4,6 +4,8 @@ Talk to Sage and hear it answer through the Waveshare ESP32-S3-AUDIO-Board. The 
 alarms are spoken on it too. The board listens and plays; all the thinking stays on the Sage PC. The wall display
 shows the speaker's status.
 
+**Setting up the board?** Follow the dedicated [ESP32 speaker firmware installation guide](firmware/esp32/README.md) for Sage's LAN settings, ESP-IDF setup, build, flash, and troubleshooting. After setup, change the Sage PC IP from the speaker's password-protected web page without reflashing.
+
 ```
 speaker board  --Wi-Fi-->  Sage PC (port 8002)
  wake word + VAD      -->  speech-to-text (faster-whisper)
@@ -143,34 +145,13 @@ brief is unchanged.
    Do not forward the port from your router or expose it to the public internet.
 6. Restart Sage and check `http://127.0.0.1:8002/api/voice/status`. Confirm speech recognition and at least one TTS engine are available. Restart the wall display if needed.
 
-## 2. Flash the Sage firmware (Windows)
-
-The project firmware is in [`firmware/esp32`](firmware/esp32). It is built with ESP-IDF and Espressif's ESP-SR WakeNet; it does not use Waveshare's stock smart-speaker firmware. This initial implementation targets the **“Hi ESP”** wake word, signed Sage requests, Sage audio replies and announcements, and the BOOT button for approval/cancellation. The custom wake word “Sage” is not included.
-
-1. Install **ESP-IDF v5.5.x for ESP32-S3** using Espressif's [Windows setup guide](https://docs.espressif.com/projects/esp-idf/en/v5.5/esp32s3/get-started/windows-setup.html). Open the ESP-IDF PowerShell or Command Prompt shortcut after installation.
-2. Connect the board by USB-C. In the ESP-IDF terminal, go to the repository's firmware folder:
-   ```
-   cd "C:\Github Sage\SAGE\firmware\esp32"
-   idf.py set-target esp32s3
-   idf.py menuconfig
-   ```
-3. In **Sage speaker**, enter the Wi-Fi SSID/password, Sage PC's LAN IPv4 address, port `8002`, and the same HMAC secret configured on Sage. These settings are stored in the ignored local `sdkconfig`; never share or commit that file.
-4. In **ESP Speech Recognition**, enable the **Hi,ESP / `wn9_hiesp` WakeNet model**. Save and exit. The build uses the board's 16 MB flash and PSRAM.
-5. Build and flash (replace `COM5` with the board's serial port):
-   ```
-   idf.py build
-   idf.py -p COM5 flash monitor
-   ```
-   If the port is not detected, disconnect USB, hold **BOOT**, reconnect USB, release **BOOT**, and retry. After flashing, press **RESET** or reconnect the board.
-6. Connect a 4–8 Ω speaker to the board's speaker output. Once the serial log says the Sage speaker is ready, say **“Hi ESP”**, pause, then speak. If the board receives no answer, check that its IP is the one allow-listed on Sage, both devices can reach each other on the LAN, and the PC clock is correct.
-
-## 3. The board hardware
-- It has a speaker header for an external speaker. You need a small 4-8 ohm speaker (about 3 W). Check this first.
+## 2. The board hardware
+- The speaker header needs an external 4–8 Ω speaker (about 3 W).
 - Pins: I2C SDA 11 / SCL 10; I2S MCLK 12, SCLK 13, LRCK 14; speaker data out (ES8311) 16; microphone data in (ES7210) 15.
   The firmware enables the speaker amplifier using the TCA9555 expander. The BOOT button maps to short/long approval presses.
 - “Hi ESP” is detected locally by WakeNet. Audio is sent to Sage only after the wake word. The initial firmware uses the first microphone channel and does not yet include echo cancellation or RGB ring control.
 
-## 4. Protocol for the firmware (port 8002)
+## 3. Protocol for the firmware (port 8002)
 Audio both ways: 16 kHz, mono, signed 16-bit little-endian, no header. HTTP client header buffer at least 2048 bytes.
 Every request carries `X-Sage-Time` (unix seconds) and `X-Sage-Sig` = hex HMAC-SHA256(secret, `"{time}.{METHOD}.{path+query}.{sha256hex(body)}"`).
 
