@@ -1,6 +1,7 @@
 """Sage voice gateway: lets a small voice device (the Waveshare ESP32-S3-AUDIO-Board) talk to Sage over Wi-Fi.
 
-The device does the wake word, echo cancellation and silence detection. Sage does the heavy work on the PC:
+The device firmware does wake-word detection and silence detection (the current firmware has no echo cancellation).
+Sage does the heavy work on the PC:
 speech-to-text (faster-whisper), the normal chat pipeline (agent.respond, so voice and chat share history, memory,
 tools and the reminder commands), and text-to-speech (Piper, espeak-ng or Windows voices).
 
@@ -1076,7 +1077,7 @@ def start():
     try:
         _audit_init()
         _load_sleep()
-        _server = ThreadingHTTPServer((config.HOST, config.VOICE_PORT), Handler)
+        _server = ThreadingHTTPServer((config.VOICE_HOST, config.VOICE_PORT), Handler)
     except OSError as exc:
         print(f'Sage voice: cannot listen on port {config.VOICE_PORT}: {exc}', file=sys.stderr)
         return
@@ -1086,7 +1087,7 @@ def start():
     threading.Thread(target=_warm, name='sage-voice-warm', daemon=True).start()
     info = status()
     secure = 'signed requests' if info['signed_requests'] else ('token' if info['token'] else 'address allow-list only')
-    print(f"Sage voice gateway listening at http://{config.HOST}:{config.VOICE_PORT} ({secure}; speech recognition: {'ready' if info['stt'] else 'NOT installed'}; speech: {', '.join(info['tts_engines']) or 'NONE'})")
+    print(f"Sage voice gateway listening at http://{config.VOICE_HOST}:{config.VOICE_PORT} ({secure}; speech recognition: {'ready' if info['stt'] else 'NOT installed'}; speech: {', '.join(info['tts_engines']) or 'NONE'})")
 
 # ------------------------------------------------------------------ command line checks
 

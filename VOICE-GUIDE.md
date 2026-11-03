@@ -1,14 +1,15 @@
 # Sage voice: the ESP32-S3 speaker
 
 Talk to Sage and hear it answer through the Waveshare ESP32-S3-AUDIO-Board. The morning brief, timers, reminders and
-alarms are spoken on it too. The board only listens, plays and shows lights; all the thinking stays on the Sage PC.
+alarms are spoken on it too. The board listens and plays; all the thinking stays on the Sage PC. The wall display
+shows the speaker's status.
 
 ```
 speaker board  --Wi-Fi-->  Sage PC (port 8002)
- wake word + echo          speech-to-text (faster-whisper)
- cancellation + VAD   -->  spoken commands (sleep, status)  or  the normal Sage chat (same history, tools, reminders)
+ wake word + VAD      -->  speech-to-text (faster-whisper)
+                         spoken commands (sleep, status) or the normal Sage chat (same history, tools, reminders)
  plays the reply      <--  text-to-speech (Piper / espeak-ng / Windows voices)
- light ring (RGB)          wall display shows the same light ring
+                         wall display shows speaker status
 ```
 
 ## What you can say
@@ -34,7 +35,10 @@ of the brief, and the brief is waiting when you dismiss it. (If the wall display
 1. **Only your speaker can talk to Sage.** The address must be in `SAGE_ALLOWED_CLIENT_IPS`. With `SAGE_VOICE_SECRET` set,
    every request must also be signed (HMAC-SHA256 over time, method, path and body, see `voice_util.sign`), so a captured
    request cannot be replayed (90 s window, each signature once) or edited. Without a secret, `SAGE_VOICE_TOKEN` is checked.
-   To revoke the speaker: change the secret and restart Sage. Programs on the Sage PC itself are not asked for the secret.
+   The secret is compiled into the firmware, so do not share a preconfigured firmware image; rotate the secret if the
+   board or image is lost. To revoke the speaker, change the secret and restart Sage. Programs on the Sage PC itself
+   are not asked for the secret. The gateway uses plain HTTP: HMAC authenticates requests but does not encrypt audio.
+   Keep port 8002 on a trusted private LAN and never forward it to the public internet.
 2. **Lockout:** 5 refused requests within 10 minutes block that address for 10 minutes and show a warning on the wall display.
    Slow or stalled connections are dropped after 30 seconds.
 3. **Voice has less power than the keyboard.** Anyone in earshot can trigger it, so by voice Sage can only read, search,
@@ -48,13 +52,15 @@ of the brief, and the brief is waiting when you dismiss it. (If the wall display
 4. **Audit trail:** every voice event is stored in the `voice_audit` table (time, address, what was heard, what Sage did,
    what was refused). See it at `GET /api/voice/audit` on the main Sage port, or ask "show me the voice log".
    The last 3000 rows are kept. Audio itself is never stored.
-5. The wake word runs on the board; nothing is sent before it hears it. Put a hardware mute on the board that turns the ring red.
+5. The wake word runs on the board; audio is sent only after it hears the wake word. This firmware does not implement a
+   hardware microphone mute or a physical light ring; add a hardware mute if you need a physical microphone disconnect.
 
 ## Light ring
 The server tells the wall display (and the board can mirror it) what the ring should show:
 idle (dim blue), listening (blue), thinking (amber, circling), speaking (green), alert (amber flashing while a timer or
 reminder is ringing), muted (red), error (red), sleeping (almost off). The wall display shows it next to the sleep button
-when the speaker is online. The board reports `listening`/`muted` itself with `POST /api/voice/ring`.
+when the speaker is online. The current ESP firmware has no RGB control and only posts `idle` to the gateway; it does not
+provide physical light-ring feedback.
 
 ## Phone as a second speaker (iPhone)
 Talk to the same Sage from your phone, with the same history, status commands, sleep mode and the same limits as the speaker.
@@ -122,27 +128,58 @@ brief is unchanged.
 2. Speech output, pick one: **Piper** (best; set `SAGE_PIPER_CMD`, `SAGE_PIPER_VOICE_NL`, `SAGE_PIPER_VOICE_EN`, each voice needs its
    `.onnx` and `.onnx.json`), **Windows voices** (no setup; Dutch only if a Dutch voice is installed), or **espeak-ng** (Linux/Kali).
 3. Check: `python -m sage.voice --check`, then `python -m sage.voice --say "Goedemorgen" --lang nl` and play `data\voice-test.wav`.
-4. Give the board a fixed IP, add it to `SAGE_ALLOWED_CLIENT_IPS` in `start-sage.bat`, and open the port once (admin prompt):
-   `netsh advfirewall firewall add rule name="Sage voice" dir=in action=allow protocol=TCP localport=8002 profile=private`
-5. Choose a long random `SAGE_VOICE_SECRET` and put the same value in the firmware. The board needs the correct time (SNTP).
-6. Restart Sage and the wall display (it needs the new `sage_wall.py` to show the ring).
+4. Give the Sage PC and speaker stable addresses on the same trusted LAN. In the ignored `start-sage.local.bat`, keep the dashboard on localhost and expose only the voice gateway:
+   ```
+   set "SAGE_HOST=127.0.0.1"
+   set "SAGE_VOICE_HOST=0.0.0.0"
+   set "SAGE_ALLOWED_CLIENT_IPS=192.168.1.50"
+   set "SAGE_VOICE_SECRET=replace-with-a-long-random-secret"
+   ```
+   Replace the IP with the speaker's reserved address. Generate a secret with
+   `python -c "import secrets; print(secrets.token_urlsafe(32))"` and keep it private. Do not put these values in `start-sage.bat`.
+   `SAGE_VOICE_HOST` is separate from `SAGE_HOST`, so this does not expose the dashboard.
+5. Open port 8002 on the Windows firewall for the **Private** profile only (admin prompt):
+   `netsh advfirewall firewall add rule name="Sage voice" dir=in action=allow protocol=TCP localport=8002 profile=private remoteip=192.168.1.50`
+   Do not forward the port from your router or expose it to the public internet.
+6. Restart Sage and check `http://127.0.0.1:8002/api/voice/status`. Confirm speech recognition and at least one TTS engine are available. Restart the wall display if needed.
 
-## 2. The board (verified on Waveshare's wiki)
+## 2. Flash the Sage firmware (Windows)
+
+The project firmware is in [`firmware/esp32`](firmware/esp32). It is built with ESP-IDF and Espressif's ESP-SR WakeNet; it does not use Waveshare's stock smart-speaker firmware. This initial implementation targets the **“Hi ESP”** wake word, signed Sage requests, Sage audio replies and announcements, and the BOOT button for approval/cancellation. The custom wake word “Sage” is not included.
+
+1. Install **ESP-IDF v5.5.x for ESP32-S3** using Espressif's [Windows setup guide](https://docs.espressif.com/projects/esp-idf/en/v5.5/esp32s3/get-started/windows-setup.html). Open the ESP-IDF PowerShell or Command Prompt shortcut after installation.
+2. Connect the board by USB-C. In the ESP-IDF terminal, go to the repository's firmware folder:
+   ```
+   cd "C:\Github Sage\SAGE\firmware\esp32"
+   idf.py set-target esp32s3
+   idf.py menuconfig
+   ```
+3. In **Sage speaker**, enter the Wi-Fi SSID/password, Sage PC's LAN IPv4 address, port `8002`, and the same HMAC secret configured on Sage. These settings are stored in the ignored local `sdkconfig`; never share or commit that file.
+4. In **ESP Speech Recognition**, enable the **Hi,ESP / `wn9_hiesp` WakeNet model**. Save and exit. The build uses the board's 16 MB flash and PSRAM.
+5. Build and flash (replace `COM5` with the board's serial port):
+   ```
+   idf.py build
+   idf.py -p COM5 flash monitor
+   ```
+   If the port is not detected, disconnect USB, hold **BOOT**, reconnect USB, release **BOOT**, and retry. After flashing, press **RESET** or reconnect the board.
+6. Connect a 4–8 Ω speaker to the board's speaker output. Once the serial log says the Sage speaker is ready, say **“Hi ESP”**, pause, then speak. If the board receives no answer, check that its IP is the one allow-listed on Sage, both devices can reach each other on the LAN, and the PC clock is correct.
+
+## 3. The board hardware
 - It has a speaker header for an external speaker. You need a small 4-8 ohm speaker (about 3 W). Check this first.
 - Pins: I2C SDA 11 / SCL 10; I2S MCLK 12, SCLK 13, LRCK 14; speaker data out (ES8311) 16; microphone data in (ES7210) 15.
-  Amplifier enable, buttons and the RGB LED pin are in the Waveshare demo code (not in the wiki text).
-- Wake words without training: "Hi ESP", "Jarvis", "Computer". "Sage" needs Espressif's custom wake word service.
+  The firmware enables the speaker amplifier using the TCA9555 expander. The BOOT button maps to short/long approval presses.
+- “Hi ESP” is detected locally by WakeNet. Audio is sent to Sage only after the wake word. The initial firmware uses the first microphone channel and does not yet include echo cancellation or RGB ring control.
 
-## 3. Protocol for the firmware (port 8002)
+## 4. Protocol for the firmware (port 8002)
 Audio both ways: 16 kHz, mono, signed 16-bit little-endian, no header. HTTP client header buffer at least 2048 bytes.
 Every request carries `X-Sage-Time` (unix seconds) and `X-Sage-Sig` = hex HMAC-SHA256(secret, `"{time}.{METHOD}.{path+query}.{sha256hex(body)}"`).
 
 | Call | Meaning |
 |---|---|
-| `POST /api/voice/ask` | Body = one utterance (stop on silence, max 30 s, with `Content-Length`). `204` = nothing understood. `200` = chunked PCM reply. Headers: `X-Sage-Heard`, `X-Sage-Reply`, `X-Sage-Lang`, `X-Sage-Listen`, `X-Sage-Asleep`. |
+| `POST /api/voice/ask` | Body = one utterance (stop on silence, max 28 s in this firmware, with `Content-Length`). `204` = nothing understood. `200` = chunked PCM reply. Headers: `X-Sage-Heard`, `X-Sage-Reply`, `X-Sage-Lang`, `X-Sage-Listen`, `X-Sage-Asleep`. |
 | `GET /api/voice/poll?wait=25` | Run in its own task. `204` = nothing (still has `X-Sage-Asleep`), `200` = chunked PCM to play (brief, timer, reminder, alarm), plus `X-Sage-Kind`, `X-Sage-Id`. |
 | `POST /api/voice/button` | `{"press":"short"}` approves / `{"press":"long"}` cancels the one request waiting for the button. `204` = nothing waiting; `200` = spoken result. Send it on every button press that is not used for something else (alarm stop, mute). |
-| `POST /api/voice/ring` | `{"state":"listening"|"idle"|"muted"|"error"}` what the board is doing. |
+| `POST /api/voice/ring` | `{"state":"listening"|"idle"|"muted"|"error"}` describes device status. This firmware currently posts `idle` only. |
 | `X-Sage-Listen: 1` | After playing, open the microphone for about 6 s without a wake word (to answer "done"/"snooze", or a question). |
 | `X-Sage-Asleep: 1` | Switch the ring and any attached screen off; keep listening for the wake word. |
 | `POST /api/voice/say`, `GET /api/voice/status` | Make the speaker say something; engines and `device_online`. |
@@ -155,8 +192,9 @@ curl -X POST -d "{\"text\":\"Goedemorgen Kyan\",\"lang\":\"nl\"}" http://localho
 ```
 Tests: `python -m unittest tests.test_voice` (helpers, intents, signing, trust limits).
 
-## Not done yet
-- The board firmware (needs the Waveshare demo code for the amplifier enable, LED pin and drivers).
+## Firmware validation status
+- Firmware source and the install steps are included, but this release has **not been compiled or tested on a physical board** in this environment. First-time setup requires ESP-IDF to build the model image and verify the board-specific audio path.
+- Echo cancellation and RGB ring control are not included yet.
 - Speaking replies while the model is still writing (now: whole answer first, then sentence by sentence).
 - Dashboard page for the audit trail (the data and API exist).
-- Real speech models and the real board are untested; everything else was tested against stand-ins.
+- The real speech models and physical speaker still need end-to-end testing.

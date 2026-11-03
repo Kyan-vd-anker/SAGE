@@ -32,6 +32,7 @@ ALLOWED_CLIENT_IPS = {item.strip() for item in os.getenv("SAGE_ALLOWED_CLIENT_IP
 # Voice gateway for the ESP32-S3 speaker (see VOICE-GUIDE.md)
 _ON = ("1", "true", "yes", "on")
 VOICE_ENABLED = os.getenv("SAGE_VOICE", "1").lower() in _ON
+VOICE_HOST = os.getenv("SAGE_VOICE_HOST", HOST)
 VOICE_PORT = int(os.getenv("SAGE_VOICE_PORT", "8002"))
 VOICE_TOKEN = os.getenv("SAGE_VOICE_TOKEN", "")
 VOICE_SECRET = os.getenv("SAGE_VOICE_SECRET", "")   # when set, every device request must be signed (HMAC-SHA256)

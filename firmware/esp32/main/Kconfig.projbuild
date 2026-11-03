@@ -1,0 +1,28 @@
+menu "Sage speaker"
+
+config SAGE_VOICE_HOST
+    string "Sage PC IPv4 address"
+    default "192.168.1.10"
+    help
+        Local IPv4 address of the Sage PC, without scheme or port.
+
+config SAGE_VOICE_PORT
+    int "Sage voice gateway port"
+    range 1 65535
+    default 8002
+
+config SAGE_VOICE_SECRET
+    string "Sage voice HMAC secret"
+    default ""
+    help
+        Use the same random secret as SAGE_VOICE_SECRET on the Sage PC.
+
+config SAGE_WIFI_SSID
+    string "Wi-Fi SSID"
+    default ""
+
+config SAGE_WIFI_PASSWORD
+    string "Wi-Fi password"
+    default ""
+
+endmenu

@@ -10,7 +10,7 @@ Sage is a local-first personal assistant built around the Ollama installation on
 
 For the Sage dashboard currently configured on port 8001, double-click [`start-sage.bat`](start-sage.bat) and keep its window open while using Sage, then open <http://127.0.0.1:8001>. If Sage is already running, use that existing server rather than starting a second copy.
 
-The first run creates `data/sage.db`, `data/vault/`, and `data/workspace/`. Set `SAGE_HOST`, `SAGE_PORT`, `OLLAMA_URL`, `SAGE_MODEL`, `SAGE_CODING_MODEL`, `SAGE_DB`, `SAGE_VAULT`, `SAGE_WORKSPACE`, `SAGE_WAKE_WORD`, and `SAGE_WEB_SEARCH_ENABLED` to override defaults. `SAGE_MODEL` selects the ordinary-chat model; `SAGE_CODING_MODEL` selects the coding model. The UI binds to localhost by default. Do not expose it to a network without adding authentication.
+The first run creates `data/sage.db`, `data/vault/`, and `data/workspace/`. Set `SAGE_HOST`, `SAGE_PORT`, `SAGE_VOICE_HOST`, `SAGE_VOICE_PORT`, `OLLAMA_URL`, `SAGE_MODEL`, `SAGE_CODING_MODEL`, `SAGE_DB`, `SAGE_VAULT`, `SAGE_WORKSPACE`, `SAGE_WAKE_WORD`, and `SAGE_WEB_SEARCH_ENABLED` to override defaults. `SAGE_MODEL` selects the ordinary-chat model; `SAGE_CODING_MODEL` selects the coding model. The dashboard binds to localhost by default. For a LAN speaker, bind only the voice gateway with `SAGE_VOICE_HOST=0.0.0.0`, allow-list the device IP, and configure `SAGE_VOICE_SECRET`; do not expose the dashboard or voice port to the public internet. See [VOICE-GUIDE.md](VOICE-GUIDE.md).
 
 ## Trigger a briefing from an iPhone Shortcut
 

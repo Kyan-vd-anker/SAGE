@@ -1,0 +1,5 @@
+dependencies:
+  idf: ">=5.4,<6.0"
+  espressif/esp_codec_dev: "^1.6.2"
+  espressif/esp-sr: "^2.6.0"
+  espressif/esp_io_expander_tca95xx_16bit: "^2.0.2"
