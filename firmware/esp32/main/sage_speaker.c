@@ -6,6 +6,8 @@
 #include <time.h>
 
 #include "board_audio.h"
+#include "board_light.h"
+#include "cJSON.h"
 #include "driver/gpio.h"
 #include "esp_heap_caps.h"
 #include "esp_check.h"
@@ -20,6 +22,7 @@
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
+#include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "mbedtls/md.h"
@@ -28,6 +31,7 @@
 #include "lwip/inet.h"
 #include "esp_afe_config.h"
 #include "esp_afe_sr_iface.h"
+#include "esp_afe_sr_models.h"
 #include "esp_vad.h"
 #include "esp_wn_iface.h"
 #include "model_path.h"
@@ -46,6 +50,7 @@
 static const char *TAG = "sage-speaker";
 static EventGroupHandle_t wifi_events;
 static SemaphoreHandle_t audio_stream_mutex;
+static QueueHandle_t ring_report_queue;
 static volatile bool speaker_active;
 static volatile int64_t followup_until_ms;
 static volatile int64_t suppress_wake_until_ms;
@@ -62,7 +67,16 @@ typedef struct {
     bool locked;
     bool play_response;
     bool *listen;
+    char *response;
+    size_t response_capacity;
+    size_t response_size;
+    bool response_overflow;
 } http_audio_context_t;
+
+typedef enum {
+    RING_REPORT_IDLE,
+    RING_REPORT_LISTENING,
+} ring_report_state_t;
 
 static void check(esp_err_t err, const char *message)
 {
@@ -216,6 +230,16 @@ static esp_err_t http_event(esp_http_client_event_t *event)
         event->header_key && event->header_value &&
         strcmp(event->header_key, "X-Sage-Listen") == 0) {
         *audio->listen = strcmp(event->header_value, "1") == 0;
+    } else if (event->event_id == HTTP_EVENT_ON_DATA && audio->response &&
+               event->data && event->data_len > 0) {
+        size_t length = (size_t)event->data_len;
+        if (length >= audio->response_capacity - audio->response_size) {
+            audio->response_overflow = true;
+            return ESP_FAIL;
+        }
+        memcpy(audio->response + audio->response_size, event->data, length);
+        audio->response_size += length;
+        audio->response[audio->response_size] = '\0';
     } else if (event->event_id == HTTP_EVENT_ON_DATA && audio->play_response &&
                event->data && event->data_len > 0 &&
                esp_http_client_get_status_code(event->client) == 200) {
@@ -489,12 +513,146 @@ static void load_server_ip(void)
     }
 }
 
+static void report_ring_task(void *arg)
+{
+    ring_report_state_t state;
+    for (;;) {
+        if (xQueueReceive(ring_report_queue, &state, portMAX_DELAY) != pdTRUE) {
+            continue;
+        }
+        const char *name = state == RING_REPORT_LISTENING ? "listening" : "idle";
+        char body[32];
+        int size = snprintf(body, sizeof(body), "{\"state\":\"%s\"}", name);
+        perform_request("/api/voice/ring", "POST", (const uint8_t *)body, (size_t)size,
+                        false, false, NULL);
+    }
+}
+
 static void report_ring(const char *state)
 {
-    char body[32];
-    int size = snprintf(body, sizeof(body), "{\"state\":\"%s\"}", state);
-    perform_request("/api/voice/ring", "POST", (const uint8_t *)body, (size_t)size, false, false,
-                    NULL);
+    ring_report_state_t update = strcmp(state, "listening") == 0
+                                     ? RING_REPORT_LISTENING
+                                     : RING_REPORT_IDLE;
+    board_light_set_state(update == RING_REPORT_LISTENING ? BOARD_LIGHT_LISTENING
+                                                           : BOARD_LIGHT_IDLE);
+    if (!ring_report_queue || xQueueSend(ring_report_queue, &update, 0) != pdTRUE) {
+        ESP_LOGW(TAG, "Could not queue ring status update");
+    }
+}
+
+static int perform_state_request(const char *path, char *response, size_t response_capacity)
+{
+    http_audio_context_t audio = {
+        .response = response,
+        .response_capacity = response_capacity,
+    };
+    esp_http_client_handle_t client = new_client(path, "GET", NULL, 0, false, &audio);
+    if (!client) {
+        ESP_LOGE(TAG, "Could not create or sign state request");
+        return -1;
+    }
+    esp_err_t err = esp_http_client_perform(client);
+    int status = err == ESP_OK ? esp_http_client_get_status_code(client) : -1;
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Ring state request failed: %s", esp_err_to_name(err));
+    } else if (status >= 400) {
+        ESP_LOGE(TAG, "Ring state request returned HTTP %d", status);
+    }
+    esp_http_client_cleanup(client);
+    return audio.response_overflow ? -1 : status;
+}
+
+static bool ring_state_from_json(const char *json, board_light_state_t *state, int *version)
+{
+    cJSON *root = cJSON_Parse(json);
+    if (!root) {
+        return false;
+    }
+    const cJSON *ring = cJSON_GetObjectItemCaseSensitive(root, "ring");
+    const cJSON *version_item = cJSON_GetObjectItemCaseSensitive(root, "version");
+    bool valid = cJSON_IsString(ring) && cJSON_IsNumber(version_item);
+    if (valid) {
+        const char *name = ring->valuestring;
+        if (strcmp(name, "idle") == 0) {
+            *state = BOARD_LIGHT_IDLE;
+        } else if (strcmp(name, "listening") == 0) {
+            *state = BOARD_LIGHT_LISTENING;
+        } else if (strcmp(name, "thinking") == 0) {
+            *state = BOARD_LIGHT_THINKING;
+        } else if (strcmp(name, "speaking") == 0) {
+            *state = BOARD_LIGHT_SPEAKING;
+        } else if (strcmp(name, "alert") == 0) {
+            *state = BOARD_LIGHT_ALERT;
+        } else if (strcmp(name, "muted") == 0) {
+            *state = BOARD_LIGHT_MUTED;
+        } else if (strcmp(name, "error") == 0) {
+            *state = BOARD_LIGHT_ERROR;
+        } else if (strcmp(name, "sleeping") == 0) {
+            *state = BOARD_LIGHT_SLEEPING;
+        } else {
+            valid = false;
+        }
+        if (valid) {
+            *version = version_item->valueint;
+        }
+    }
+    cJSON_Delete(root);
+    return valid;
+}
+
+static const char *ring_state_name(board_light_state_t state)
+{
+    switch (state) {
+    case BOARD_LIGHT_IDLE:
+        return "idle";
+    case BOARD_LIGHT_LISTENING:
+        return "listening";
+    case BOARD_LIGHT_THINKING:
+        return "thinking";
+    case BOARD_LIGHT_SPEAKING:
+        return "speaking";
+    case BOARD_LIGHT_ALERT:
+        return "alert";
+    case BOARD_LIGHT_MUTED:
+        return "muted";
+    case BOARD_LIGHT_ERROR:
+        return "error";
+    case BOARD_LIGHT_SLEEPING:
+        return "sleeping";
+    default:
+        return "unknown";
+    }
+}
+
+static void ring_state_task(void *arg)
+{
+    int version = -1;
+    board_light_state_t last_state = (board_light_state_t)-1;
+    for (;;) {
+        char path[96];
+        char response[256] = {0};
+        snprintf(path, sizeof(path), "/api/voice/state?since=%d&wait=20", version);
+        int status = perform_state_request(path, response, sizeof(response));
+        if (status == 200) {
+            board_light_state_t state;
+            int next_version;
+            if (ring_state_from_json(response, &state, &next_version)) {
+                version = next_version;
+                board_light_set_state(state);
+                if (state != last_state) {
+                    ESP_LOGI(TAG, "Sage ring state: %s", ring_state_name(state));
+                    last_state = state;
+                }
+            } else {
+                ESP_LOGW(TAG, "Ignoring invalid ring state response");
+                vTaskDelay(pdMS_TO_TICKS(3000));
+            }
+        } else if (status < 0) {
+            vTaskDelay(pdMS_TO_TICKS(3000));
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(10000));
+        }
+    }
 }
 
 static void send_utterance(size_t byte_count)
@@ -521,9 +679,37 @@ static void feed_frame(int16_t *raw, int16_t *mono, int chunk_samples)
         vTaskDelay(pdMS_TO_TICKS(10));
         return;
     }
+
+    static unsigned debug_counter = 0;
+    int32_t sum_abs[4] = {0};
+    int peak[4] = {0};
+
     for (int i = 0; i < chunk_samples; ++i) {
-        mono[i] = raw[i * SAGE_MIC_TDM_CHANNELS + MIC_LEVEL_CHANNEL];
+        for (int ch = 0; ch < 4; ++ch) {
+            int value = raw[i * 4 + ch];
+            int magnitude = value < 0 ? -value : value;
+
+            sum_abs[ch] += magnitude;
+
+            if (magnitude > peak[ch]) {
+                peak[ch] = magnitude;
+            }
+        }
+
+        mono[i] = raw[i * 4 + MIC_LEVEL_CHANNEL];
     }
+
+    if (++debug_counter >= 50) {
+        debug_counter = 0;
+
+        ESP_LOGI(TAG, "MIC avg: %ld %ld %ld %ld | peak: %d %d %d %d",
+                 (long)(sum_abs[0] / chunk_samples),
+                 (long)(sum_abs[1] / chunk_samples),
+                 (long)(sum_abs[2] / chunk_samples),
+                 (long)(sum_abs[3] / chunk_samples),
+                 peak[0], peak[1], peak[2], peak[3]);
+    }
+
     afe->feed(afe_data, mono);
 }
 
@@ -582,6 +768,8 @@ static void audio_task(void *arg)
 {
     int chunk_samples = afe->get_feed_chunksize(afe_data);
     int channels = afe->get_feed_channel_num(afe_data);
+    ESP_LOGI(TAG, "Wake audio feed: %d samples/frame, %d channel(s), %d Hz",
+             chunk_samples, channels, afe->get_samp_rate(afe_data));
     int16_t *raw = heap_caps_malloc((size_t)chunk_samples * SAGE_MIC_TDM_CHANNELS *
                                         sizeof(int16_t),
                                     MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -599,11 +787,18 @@ static void audio_task(void *arg)
         return;
     }
 
+    unsigned fetch_debug_counter = 0;
     for (;;) {
         feed_frame(raw, mono, chunk_samples);
         afe_fetch_result_t *result = afe->fetch_with_delay(afe_data, pdMS_TO_TICKS(100));
         if (!result || result->ret_value == ESP_FAIL || speaker_active) {
             continue;
+        }
+        if (++fetch_debug_counter >= 50) {
+            fetch_debug_counter = 0;
+            ESP_LOGI(TAG, "AFE vad=%d wake=%d index=%d volume=%.1f dBFS ret=%d",
+                     (int)result->vad_state, (int)result->wakeup_state,
+                     result->wake_word_index, result->data_volume, result->ret_value);
         }
         int64_t now = esp_timer_get_time() / 1000;
         bool followup = now < followup_until_ms;
@@ -611,6 +806,8 @@ static void audio_task(void *arg)
             (result->wakeup_state == WAKENET_DETECTED ||
              (followup && result->vad_state == VAD_SPEECH))) {
             followup_until_ms = 0;
+            board_light_set_state(BOARD_LIGHT_LISTENING);
+            report_ring("listening");
             size_t captured = capture_after_wake(raw, mono, chunk_samples);
             send_utterance(captured);
         }
@@ -719,13 +916,24 @@ void app_main(void)
         ESP_LOGE(TAG, "Could not create audio stream mutex");
         abort();
     }
+    ring_report_queue = xQueueCreate(4, sizeof(ring_report_state_t));
+    if (!ring_report_queue) {
+        ESP_LOGE(TAG, "Could not create ring status queue");
+        abort();
+    }
     check(board_audio_init(), "Audio board init");
+    err = board_light_init();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "RGB light ring unavailable: %s", esp_err_to_name(err));
+    }
     wifi_start();
     setup_server_start();
     clock_start();
     wake_engine_start();
     xTaskCreatePinnedToCore(audio_task, "sage-audio", 8192, NULL, 8, NULL, 1);
     xTaskCreatePinnedToCore(poll_task, "sage-poll", 6144, NULL, 5, NULL, 0);
+    xTaskCreatePinnedToCore(report_ring_task, "sage-ring-report", 4096, NULL, 4, NULL, 0);
+    xTaskCreatePinnedToCore(ring_state_task, "sage-ring", 4096, NULL, 4, NULL, 0);
     xTaskCreatePinnedToCore(button_task, "sage-button", 3072, NULL, 4, NULL, 0);
     ESP_LOGI(TAG, "Sage speaker ready; say Hi ESP to speak");
 }

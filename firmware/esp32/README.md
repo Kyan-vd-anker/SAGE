@@ -144,4 +144,4 @@ see the password. Do not expose the setup page or the Sage voice gateway to the 
 
 ## Current limitations
 
-This firmware targets the “Hi ESP” wake word. It does not include echo cancellation, RGB light-ring control, or a hardware microphone mute. The firmware has not yet been built with ESP-IDF or tested on a physical board in this development environment, so confirm the build and audio behavior on your board before relying on it.
+This firmware targets the “Hi ESP” wake word and mirrors Sage's wall-display states on the board's seven WS2812 RGB LEDs (GPIO 38). It does not include echo cancellation or a hardware microphone mute. The firmware builds with ESP-IDF 5.5.6 but has not been tested on a physical board in this development environment, so confirm the audio and light-ring behavior on your board before relying on it.

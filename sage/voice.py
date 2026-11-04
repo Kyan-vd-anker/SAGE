@@ -17,6 +17,8 @@ Everything is plain HTTP on its own port (SAGE_VOICE_PORT, default 8002). Audio 
                                alarms). 204 after `wait` seconds, otherwise the same chunked PCM plus
                                X-Sage-Kind (brief|timer|reminder|alarm|say) and X-Sage-Id. Every answer, also the 204,
                                carries X-Sage-Asleep.
+    GET  /api/voice/state?since=VERSION&wait=20
+                               long-poll for the same ring state used by the wall display.
     POST /api/voice/button     {"press": "short"|"long"}  physical button: short approves the one request waiting
                                for a button press, long cancels it. 204 when nothing is waiting.
     POST /api/voice/ring       {"state": "listening"|"idle"|"muted"|"error"}  what the device is doing right now
@@ -881,6 +883,13 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if url.path == '/api/voice/poll':
                 return self._poll(query)
+            if url.path == '/api/voice/state':
+                try:
+                    since = int((query.get('since') or ['-1'])[0])
+                    wait = max(0.0, min(float((query.get('wait') or ['0'])[0]), 25.0))
+                except ValueError:
+                    return self._json({'error': 'Invalid ring state wait or version'}, 400)
+                return self._json(wait_state(since, wait) if wait else state_snapshot())
             if url.path == '/api/voice/status':
                 return self._json(status())
             return self._json({'error': 'Not found'}, 404)

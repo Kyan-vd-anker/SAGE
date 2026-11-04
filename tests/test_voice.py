@@ -125,5 +125,36 @@ class TrustTests(unittest.TestCase):
             self.assertTrue(trust.is_voice())
 
 
+class VoiceGatewayStateTests(unittest.TestCase):
+    def test_gateway_exposes_wall_display_ring_state(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from sage import voice
+
+        expected = {'version': 3, 'ring': 'thinking', 'asleep': False, 'device_online': True}
+        handler = SimpleNamespace(
+            path='/api/voice/state?since=2&wait=4',
+            _authorize=lambda: True,
+            _json=lambda value, status=200: (value, status),
+        )
+        with patch('sage.voice.wait_state', return_value=expected) as wait_state:
+            self.assertEqual(voice.Handler.do_GET(handler), (expected, 200))
+        wait_state.assert_called_once_with(2, 4.0)
+
+    def test_gateway_rejects_invalid_ring_state_query(self):
+        from types import SimpleNamespace
+        from sage import voice
+
+        handler = SimpleNamespace(
+            path='/api/voice/state?since=bad&wait=4',
+            _authorize=lambda: True,
+            _json=lambda value, status=200: (value, status),
+        )
+        self.assertEqual(
+            voice.Handler.do_GET(handler),
+            ({'error': 'Invalid ring state wait or version'}, 400),
+        )
+
+
 if __name__ == '__main__':
     unittest.main()

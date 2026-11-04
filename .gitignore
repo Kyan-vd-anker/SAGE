@@ -31,6 +31,7 @@ start-sage.local.bat
 
 # ESP-IDF generated and device-specific firmware files.
 firmware/esp32/build/
+firmware/esp32/managed_components/
 firmware/esp32/sdkconfig
 firmware/esp32/sdkconfig.old
 firmware/esp32/dependencies.lock

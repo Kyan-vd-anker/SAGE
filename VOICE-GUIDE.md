@@ -55,14 +55,15 @@ of the brief, and the brief is waiting when you dismiss it. (If the wall display
    what was refused). See it at `GET /api/voice/audit` on the main Sage port, or ask "show me the voice log".
    The last 3000 rows are kept. Audio itself is never stored.
 5. The wake word runs on the board; audio is sent only after it hears the wake word. This firmware does not implement a
-   hardware microphone mute or a physical light ring; add a hardware mute if you need a physical microphone disconnect.
+   hardware microphone mute; add a hardware mute if you need a physical microphone disconnect.
 
 ## Light ring
-The server tells the wall display (and the board can mirror it) what the ring should show:
+The server tells the wall display and the board what the ring should show:
 idle (dim blue), listening (blue), thinking (amber, circling), speaking (green), alert (amber flashing while a timer or
 reminder is ringing), muted (red), error (red), sleeping (almost off). The wall display shows it next to the sleep button
-when the speaker is online. The current ESP firmware has no RGB control and only posts `idle` to the gateway; it does not
-provide physical light-ring feedback.
+when the speaker is online. The ESP firmware drives the board's seven built-in RGB LEDs and polls the authenticated
+voice gateway for the same ring state. It reports `listening` after detecting the wake word; the server supplies the
+thinking, speaking, alert, and sleep states.
 
 ## Phone as a second speaker (iPhone)
 Talk to the same Sage from your phone, with the same history, status commands, sleep mode and the same limits as the speaker.
@@ -149,7 +150,7 @@ brief is unchanged.
 - The speaker header needs an external 4–8 Ω speaker (about 3 W).
 - Pins: I2C SDA 11 / SCL 10; I2S MCLK 12, SCLK 13, LRCK 14; speaker data out (ES8311) 16; microphone data in (ES7210) 15.
   The firmware enables the speaker amplifier using the TCA9555 expander. The BOOT button maps to short/long approval presses.
-- “Hi ESP” is detected locally by WakeNet. Audio is sent to Sage only after the wake word. The initial firmware uses the first microphone channel and does not yet include echo cancellation or RGB ring control.
+- “Hi ESP” is detected locally by WakeNet. Audio is sent to Sage only after the wake word. The initial firmware uses the first microphone channel and does not yet include echo cancellation.
 
 ## 3. Protocol for the firmware (port 8002)
 Audio both ways: 16 kHz, mono, signed 16-bit little-endian, no header. HTTP client header buffer at least 2048 bytes.
@@ -159,8 +160,9 @@ Every request carries `X-Sage-Time` (unix seconds) and `X-Sage-Sig` = hex HMAC-S
 |---|---|
 | `POST /api/voice/ask` | Body = one utterance (stop on silence, max 28 s in this firmware, with `Content-Length`). `204` = nothing understood. `200` = chunked PCM reply. Headers: `X-Sage-Heard`, `X-Sage-Reply`, `X-Sage-Lang`, `X-Sage-Listen`, `X-Sage-Asleep`. |
 | `GET /api/voice/poll?wait=25` | Run in its own task. `204` = nothing (still has `X-Sage-Asleep`), `200` = chunked PCM to play (brief, timer, reminder, alarm), plus `X-Sage-Kind`, `X-Sage-Id`. |
+| `GET /api/voice/state?since=VERSION&wait=20` | Long-poll the ring state used by the wall display; returns JSON with `version`, `ring`, `asleep`, and `device_online`. |
 | `POST /api/voice/button` | `{"press":"short"}` approves / `{"press":"long"}` cancels the one request waiting for the button. `204` = nothing waiting; `200` = spoken result. Send it on every button press that is not used for something else (alarm stop, mute). |
-| `POST /api/voice/ring` | `{"state":"listening"|"idle"|"muted"|"error"}` describes device status. This firmware currently posts `idle` only. |
+| `POST /api/voice/ring` | `{"state":"listening"|"idle"|"muted"|"error"}` describes device status. The firmware reports `listening` after wake-word detection and `idle` after the request. |
 | `X-Sage-Listen: 1` | After playing, open the microphone for about 6 s without a wake word (to answer "done"/"snooze", or a question). |
 | `X-Sage-Asleep: 1` | Switch the ring and any attached screen off; keep listening for the wake word. |
 | `POST /api/voice/say`, `GET /api/voice/status` | Make the speaker say something; engines and `device_online`. |
@@ -175,7 +177,7 @@ Tests: `python -m unittest tests.test_voice` (helpers, intents, signing, trust l
 
 ## Firmware validation status
 - Firmware source and the install steps are included, but this release has **not been compiled or tested on a physical board** in this environment. First-time setup requires ESP-IDF to build the model image and verify the board-specific audio path.
-- Echo cancellation and RGB ring control are not included yet.
+- Echo cancellation is not included yet.
 - Speaking replies while the model is still writing (now: whole answer first, then sentence by sentence).
 - Dashboard page for the audit trail (the data and API exist).
 - The real speech models and physical speaker still need end-to-end testing.

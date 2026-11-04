@@ -12,6 +12,10 @@ For the Sage dashboard currently configured on port 8001, double-click [`start-s
 
 The first run creates `data/sage.db`, `data/vault/`, and `data/workspace/`. Set `SAGE_HOST`, `SAGE_PORT`, `SAGE_VOICE_HOST`, `SAGE_VOICE_PORT`, `OLLAMA_URL`, `SAGE_MODEL`, `SAGE_CODING_MODEL`, `SAGE_DB`, `SAGE_VAULT`, `SAGE_WORKSPACE`, `SAGE_WAKE_WORD`, and `SAGE_WEB_SEARCH_ENABLED` to override defaults. `SAGE_MODEL` selects the ordinary-chat model; `SAGE_CODING_MODEL` selects the coding model. The dashboard binds to localhost by default. For a LAN speaker, bind only the voice gateway with `SAGE_VOICE_HOST=0.0.0.0`, allow-list the device IP, and configure `SAGE_VOICE_SECRET`; do not expose the dashboard or voice port to the public internet. See [VOICE-GUIDE.md](VOICE-GUIDE.md).
 
+### Install or update on Windows
+
+Double-click [`install-sage-windows.bat`](install-sage-windows.bat); enter the folder containing your existing SAGE installation, or press Enter to use the current folder. Missing Git, Python, Ollama, and the default Ollama models are installed/downloaded when possible through `winget`. Close the SAGE window before updating. It preserves `data/`, `start-sage.local.bat`, user-added plugin files, and credentials/databases. Updates to a Git checkout require a clean working tree. To update source only, run `.\scripts\install-update-windows.ps1 -InstallPath "C:\path\to\SAGE" -SkipDependencies` from PowerShell. See [UPDATE.md](UPDATE.md) for details.
+
 ## Trigger a briefing from an iPhone Shortcut
 
 Sage can record that you are awake and immediately create the morning brief when an iPhone Shortcut calls `POST /api/shortcuts/awake`. The response contains the brief in its `answer` field; the Shortcut can speak it aloud. This endpoint is disabled until `SAGE_SHORTCUT_TOKEN` is configured and requires that bearer token. Keep Sage on localhost and access it through Tailscale Serve; do not expose the unauthenticated dashboard or API to the public internet.

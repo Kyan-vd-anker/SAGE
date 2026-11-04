@@ -21,6 +21,7 @@
 #define I2S_DIN GPIO_NUM_15
 #define I2S_DOUT GPIO_NUM_16
 
+static const char *TAG = "board-audio";
 static i2c_master_bus_handle_t i2c_bus;
 static i2s_chan_handle_t tx_channel;
 static i2s_chan_handle_t rx_channel;
@@ -182,6 +183,11 @@ esp_err_t board_audio_init(void)
     if (esp_codec_dev_open(microphone, &input_format) != ESP_CODEC_DEV_OK) {
         return ESP_FAIL;
     }
+    if (esp_codec_dev_set_in_gain(microphone, 36.0) != ESP_CODEC_DEV_OK) {
+        ESP_LOGE(TAG, "Failed to set microphone gain");
+        return ESP_FAIL;
+    }
+    ESP_LOGI(TAG, "Microphone gain set to 36 dB");
 
     const esp_codec_dev_sample_info_t output_format = {
         .bits_per_sample = 16,

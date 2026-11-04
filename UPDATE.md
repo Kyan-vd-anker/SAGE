@@ -2,6 +2,18 @@
 
 SAGE keeps its live state separate from its source code. The default database, memories, Obsidian notes, projects, uploads, and generated files live under `data/`. Git releases exclude that directory and credential files.
 
+## Install or update on Windows
+
+Double-click `install-sage-windows.bat` and enter the folder containing your existing SAGE installation, or press Enter to use the current folder. It refreshes that source folder rather than uninstalling the previous version. The script checks out the latest `main` branch using Git and updates application files without deleting user data. It preserves `data/`, `.git/`, `start-sage.local.bat`, user-added plugin files, and credential/database files. If the folder is a Git checkout, it must have the SAGE GitHub origin and a clean tracked working tree; commit or back up local source changes before updating. Close the running Sage window first.
+
+By default, the installer uses `winget` to install missing Git, Python, or Ollama and downloads any missing chat, coding, vision, or embedding models configured in `sage/config.py`. Existing Ollama models are not downloaded again. If a prerequisite was just installed but is not available in the current PowerShell session, restart the installer. To update code without checking or installing prerequisites and models, run:
+
+```powershell
+.\scripts\install-update-windows.ps1 -InstallPath "C:\path\to\SAGE" -SkipDependencies
+```
+
+The Windows installer does not touch data stored outside the install folder (including paths configured with `SAGE_DATA`, `SAGE_DB`, `SAGE_VAULT`, or `SAGE_WORKSPACE`). After it finishes, start Sage with `start-sage.bat` and open <http://127.0.0.1:8001>.
+
 ## First update for an existing Kali installation
 
 The updater works inside a Git clone. If your current Kali copy was installed by copying a folder or a ZIP, migrate once:
