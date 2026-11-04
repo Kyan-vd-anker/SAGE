@@ -41,7 +41,7 @@ Path(service_file).write_text(
             "",
             "[Service]",
             "Type=simple",
-            f"WorkingDirectory={systemd_quote(root_dir)}",
+            f"WorkingDirectory={root_dir}",
             f"ExecStart={systemd_quote(python)} -m sage",
             "Environment=SAGE_HOST=127.0.0.1",
             "Environment=SAGE_PORT=8000",
