@@ -605,7 +605,7 @@ static int perform_state_request(const char *path, char *response, size_t respon
     return audio.response_overflow ? -1 : status;
 }
 
-static bool ring_state_from_json(const char *json, board_light_state_t *state, int *version)
+static bool ring_state_from_json(const char *json, board_light_state_t *state, int *version, bool *light_off)
 {
     cJSON *root = cJSON_Parse(json);
     if (!root) {
@@ -613,6 +613,7 @@ static bool ring_state_from_json(const char *json, board_light_state_t *state, i
     }
     const cJSON *ring = cJSON_GetObjectItemCaseSensitive(root, "ring");
     const cJSON *version_item = cJSON_GetObjectItemCaseSensitive(root, "version");
+    const cJSON *light_off_item = cJSON_GetObjectItemCaseSensitive(root, "light_off");
     bool valid = cJSON_IsString(ring) && cJSON_IsNumber(version_item);
     if (valid) {
         const char *name = ring->valuestring;
@@ -637,6 +638,7 @@ static bool ring_state_from_json(const char *json, board_light_state_t *state, i
         }
         if (valid) {
             *version = version_item->valueint;
+            *light_off = cJSON_IsTrue(light_off_item);
         }
     }
     cJSON_Delete(root);
@@ -679,9 +681,11 @@ static void ring_state_task(void *arg)
         if (status == 200) {
             board_light_state_t state;
             int next_version;
-            if (ring_state_from_json(response, &state, &next_version)) {
+            bool light_off;
+            if (ring_state_from_json(response, &state, &next_version, &light_off)) {
                 version = next_version;
                 board_light_set_state(state);
+                board_light_set_off(light_off);
                 if (state != last_state) {
                     ESP_LOGI(TAG, "Sage ring state: %s", ring_state_name(state));
                     last_state = state;

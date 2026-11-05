@@ -25,7 +25,7 @@ import uuid
 from urllib.parse import urlparse
 
 DEFAULTS = {
-    'SAGE_URL': 'http://192.168.1.10:8001',   # the PC that runs Sage
+    'SAGE_URL': 'http://192.168.2.52:8001',   # the PC that runs Sage
     'POLL_SECONDS': '15',
     'DIM_AFTER_SECONDS': '180',               # dim the screen after this much inactivity
     'NIGHT_START': '23:00',                   # clock-only, very dark, between these times

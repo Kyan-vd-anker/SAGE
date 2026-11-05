@@ -48,7 +48,7 @@ Planner page and on the wall display, with the question Sage asked.
 - API: `GET /api/plan/task/<id>` for the details, `POST /api/plan/task/<id>/input` with `{"text": "...", "mark_done": false}`.
 
 ## Schedules
-Built in (change or switch off on the Planner page): morning brief (weekdays 07:30), weekly review (Sunday 18:00),
+Built in (change or switch off on the Planner page): morning brief (weekdays 08:30), weekly review (Sunday 18:00),
 nightly database backup (03:00, keeps 14), memory upkeep (03:30), daily digest (23:30).
 Add your own: `every monday at 9 summarise the ROV project` becomes a schedule, or use the Planner page.
 If Sage was off when a schedule was due, it runs late ones (within a few hours) and skips old ones.

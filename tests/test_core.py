@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from sage import config, db, plugins, jobs
+from sage import config, db, plugins, jobs, scheduler
 
 class CoreTests(unittest.TestCase):
     def setUp(self):
@@ -18,6 +18,18 @@ class CoreTests(unittest.TestCase):
     def test_memory_persists_with_provenance(self):
         mid=db.execute('INSERT INTO memories(content,kind,source,confidence,created_at,updated_at) VALUES(?,?,?,?,?,?)',('Use concise answers','preference','user',1,db.now(),db.now()))
         self.assertEqual(db.rows('SELECT content,source FROM memories WHERE id=?',(mid,))[0],{'content':'Use concise answers','source':'user'})
+
+    def test_morning_brief_default_moves_to_0830_and_migrates_existing_default(self):
+        db.execute(
+            'INSERT INTO schedules(name,spec,action,payload_json,enabled,next_run,builtin,created_at) VALUES(?,?,?,?,?,?,1,?)',
+            ('Morning brief','weekdays@07:30','morning_brief','{}',0,'',db.now()),
+        )
+
+        scheduler.seed_defaults()
+
+        row=db.rows("SELECT spec,enabled FROM schedules WHERE name='Morning brief' AND builtin=1")[0]
+        self.assertEqual(row['spec'],'weekdays@08:30')
+        self.assertEqual(row['enabled'],0)
 
     def test_assistant_code_is_formatted_source_and_saved_to_workspace(self):
         from sage import agent

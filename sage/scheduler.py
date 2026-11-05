@@ -240,7 +240,7 @@ ACTIONS = {
 }
 
 DEFAULTS = [
-    ('Morning brief', 'weekdays@07:30', 'morning_brief', {'catchup_minutes': 240}),
+    ('Morning brief', 'weekdays@08:30', 'morning_brief', {'catchup_minutes': 240}),
     ('Weekly review', 'weekly:6@18:00', 'weekly_review', {'catchup_minutes': 600}),
     ('Nightly backup', 'daily@03:00', 'backup_db', {'catchup_minutes': 100000}),
     ('Memory upkeep', 'daily@03:30', 'memory_maintenance', {'catchup_minutes': 100000}),
@@ -268,9 +268,13 @@ def run_prompt_job(job):
 
 def seed_defaults():
     for name, spec, action, payload in DEFAULTS:
-        if not db.rows('SELECT id FROM schedules WHERE name=? AND builtin=1', (name,)):
+        existing = db.rows('SELECT id,spec FROM schedules WHERE name=? AND builtin=1', (name,))
+        if not existing:
             db.execute('INSERT INTO schedules(name,spec,action,payload_json,enabled,next_run,builtin,created_at) VALUES(?,?,?,?,1,?,1,?)',
                        (name, spec, action, json.dumps(payload), reminders.to_utc(next_run(spec)), db.now()))
+        elif name == 'Morning brief' and existing[0]['spec'] == 'weekdays@07:30':
+            db.execute('UPDATE schedules SET spec=?,next_run=? WHERE id=?',
+                       (spec, reminders.to_utc(next_run(spec)), existing[0]['id']))
     for row in db.rows("SELECT id,spec FROM schedules WHERE enabled=1 AND next_run=''"):
         db.execute('UPDATE schedules SET next_run=? WHERE id=?', (reminders.to_utc(next_run(row['spec'])), row['id']))
 

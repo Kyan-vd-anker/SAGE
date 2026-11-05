@@ -1,6 +1,7 @@
 #pragma once
 
 #include "esp_err.h"
+#include <stdbool.h>
 
 typedef enum {
     BOARD_LIGHT_IDLE,
@@ -15,3 +16,4 @@ typedef enum {
 
 esp_err_t board_light_init(void);
 void board_light_set_state(board_light_state_t state);
+void board_light_set_off(bool off);

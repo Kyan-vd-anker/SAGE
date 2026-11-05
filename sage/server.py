@@ -15,7 +15,9 @@ import ipaddress
 import time
 import base64
 import binascii
+import secrets
 from datetime import date, datetime, timedelta, timezone
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, unquote, parse_qs
@@ -67,9 +69,71 @@ def send_json(handler, value, status=200):
     handler.send_response(status); handler.send_header('Content-Type','application/json; charset=utf-8')
     handler.send_header('Content-Length',str(len(data))); handler.send_header('Cache-Control','no-store'); handler.end_headers(); handler.wfile.write(data)
 
+SESSIONS={}     # login cookie token -> expiry time (in memory: a restart logs everyone out)
+LOGIN_FAILS={}  # client ip -> times of recent wrong passwords
+SESSION_SECONDS=30*24*3600
+LOGIN_PAGE='''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sage login</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0a101e;color:#ecf2fc;font:16px system-ui,sans-serif}
+form{background:#122033;border:1px solid #243452;border-radius:12px;padding:28px;width:min(320px,86vw);display:grid;gap:14px}
+h1{margin:0;font-size:22px}input,button{font:inherit;padding:10px 12px;border-radius:8px;border:1px solid #243452;background:#0a101e;color:inherit}
+button{background:#5492ff;border:0;color:#fff;cursor:pointer}#e{color:#f46868;min-height:1.2em;font-size:14px}</style></head>
+<body><form id="f"><h1>Sage</h1><input id="p" type="password" placeholder="Password" autocomplete="current-password" autofocus required><button>Log in</button><div id="e"></div></form>
+<script>f.onsubmit=async e=>{e.preventDefault();const r=await fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:p.value})});
+if(r.ok)location.reload();else{const j=await r.json().catch(()=>({}));document.getElementById('e').textContent=j.error||'Login failed';p.select()}}</script></body></html>'''.encode()
+
+def password_matches(supplied):
+    a=hashlib.sha256(str(supplied).encode()).digest(); b=hashlib.sha256(config.PASSWORD.encode()).digest()
+    return hmac.compare_digest(a,b)
+
 class Handler(BaseHTTPRequestHandler):
     server_version=f'Sage/{config.VERSION}'
     def log_message(self, fmt, *args): pass
+    def session_valid(self):
+        try: cookie=SimpleCookie(self.headers.get('Cookie','')).get('sage_session')
+        except Exception: return False
+        if not cookie: return False
+        expiry=SESSIONS.get(cookie.value)
+        if not expiry: return False
+        if expiry<time.time(): SESSIONS.pop(cookie.value,None); return False
+        return True
+    def login_required(self, path, method):
+        """True when SAGE_PASSWORD is set and this request has no valid login cookie."""
+        if not config.PASSWORD: return False
+        if method=='POST' and path in ('/api/ha/command','/api/shortcuts/awake'): return False  # they have their own bearer tokens
+        try: address=ipaddress.ip_address(self.client_address[0])
+        except ValueError: return True
+        # Devices on SAGE_ALLOWED_CLIENT_IPS (wall display) skip the login. Loopback does not: Tailscale Serve arrives via loopback.
+        if not address.is_loopback and str(address) in config.ALLOWED_CLIENT_IPS: return False
+        return not self.session_valid()
+    def login_denied(self, path):
+        if path=='/':
+            self.send_response(200); self.send_header('Content-Type','text/html; charset=utf-8'); self.send_header('Content-Length',str(len(LOGIN_PAGE))); self.send_header('Cache-Control','no-store'); self.end_headers(); self.wfile.write(LOGIN_PAGE); return
+        return send_json(self,{'error':'Login required'},401)
+    def cookie_header(self, value, max_age):
+        secure='; Secure' if self.headers.get('X-Forwarded-Proto','')=='https' else ''
+        return f'sage_session={value}; Path=/; Max-Age={max_age}; HttpOnly; SameSite=Strict{secure}'
+    def handle_login(self):
+        if not config.PASSWORD: return send_json(self,{'error':'No password is set'},400)
+        ip=self.client_address[0]; now=time.time()
+        fails=[t for t in LOGIN_FAILS.get(ip,[]) if now-t<300]
+        if len(fails)>=5:
+            LOGIN_FAILS[ip]=fails; return send_json(self,{'error':'Too many wrong passwords. Wait 5 minutes.'},429)
+        try: body=payload(self,limit=4096)
+        except ValueError: return send_json(self,{'error':'Bad request'},400)
+        if not isinstance(body,dict) or not password_matches(body.get('password','')):
+            fails.append(now); LOGIN_FAILS[ip]=fails; time.sleep(1); return send_json(self,{'error':'Wrong password'},401)
+        LOGIN_FAILS.pop(ip,None)
+        for old,expiry in list(SESSIONS.items()):
+            if expiry<now: SESSIONS.pop(old,None)
+        token=secrets.token_urlsafe(32); SESSIONS[token]=now+SESSION_SECONDS
+        data=b'{"ok":true}'
+        self.send_response(200); self.send_header('Content-Type','application/json'); self.send_header('Content-Length',str(len(data))); self.send_header('Cache-Control','no-store'); self.send_header('Set-Cookie',self.cookie_header(token,SESSION_SECONDS)); self.end_headers(); self.wfile.write(data)
+    def handle_logout(self):
+        try: cookie=SimpleCookie(self.headers.get('Cookie','')).get('sage_session')
+        except Exception: cookie=None
+        if cookie: SESSIONS.pop(cookie.value,None)
+        data=b'{"ok":true}'
+        self.send_response(200); self.send_header('Content-Type','application/json'); self.send_header('Content-Length',str(len(data))); self.send_header('Set-Cookie',self.cookie_header('',0)); self.end_headers(); self.wfile.write(data)
     def chat_stream(self, body):
         """Stream a chat reply as newline-delimited JSON events: start, token, status, reset, done, error."""
         jobs.note_interaction(); project_id=body.get('project_id') or None
@@ -154,6 +218,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if not self.client_is_allowed(): return send_json(self,{'error':'This client IP is not allowed to access Sage'},403)
         path=urlparse(self.path).path
+        if self.login_required(path,'GET'): return self.login_denied(path)
         if path=='/api/events/stream':
             raw=parse_qs(urlparse(self.path).query).get('since',[''])[0]
             since=int(raw) if raw.isdigit() else events.cursor()
@@ -434,6 +499,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.client_is_allowed(): return send_json(self,{'error':'This client IP is not allowed to access Sage'},403)
         path=urlparse(self.path).path
+        if path=='/login': return self.handle_login()
+        if path=='/logout': return self.handle_logout()
+        if self.login_required(path,'POST'): return send_json(self,{'error':'Login required'},401)
         try:
             jobs.note_interaction()
             if path=='/api/engineering/assets': return self.upload_engineering_asset()
@@ -477,7 +545,9 @@ class Handler(BaseHTTPRequestHandler):
             if path=='/api/outlook/ics/connect':
                 try:return send_json(self,outlook.connect_ics(body.get('url','')))
                 except ValueError as exc:return send_json(self,{'error':str(exc)},400)
-            if path=='/api/outlook/ics/disconnect': return send_json(self,outlook.disconnect_ics())
+            if path=='/api/outlook/ics/disconnect':
+                try:return send_json(self,outlook.disconnect_ics(body.get('id')))
+                except ValueError as exc:return send_json(self,{'error':str(exc)},404)
             if path=='/api/ha/command':
                 prompts={
                     'briefing':'Give me a short spoken daily briefing using saved Sage project and task records. Mention urgent overdue work and the best next action. Keep it under 120 words.',

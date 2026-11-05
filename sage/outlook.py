@@ -2,23 +2,29 @@
 import base64
 import ctypes
 from ctypes import wintypes
+from concurrent.futures import ThreadPoolExecutor
+import hashlib
+import http.client
+import ipaddress
 import json
 import os
 import re
+import socket
+import ssl
 import threading
 import time
 from datetime import date, datetime, time as datetime_time, timedelta, timezone
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, ProxyHandler, Request, build_opener, urlopen
 
 from . import config, db
 
 GRAPH = 'https://graph.microsoft.com/v1.0'
 SCOPES = 'offline_access User.Read Calendars.ReadWrite Mail.ReadWrite'
-ICS_HOSTS = {'outlook.live.com', 'outlook.office365.com', 'outlook.office.com'}
 ICS_MAX_BYTES = 2 * 1024 * 1024
+ICS_MAX_FEEDS = 20
 _flow_lock = threading.RLock()
 _device_flow = None
 
@@ -98,10 +104,11 @@ def _load_token():
     return json.loads(raw.decode('utf-8'))
 
 
-def _save_ics_url(url):
+def _save_ics_urls(urls):
     path = _ics_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    stored = _dpapi(url.encode('utf-8'), True) if os.name == 'nt' else url.encode('utf-8')
+    raw = json.dumps(urls, ensure_ascii=False).encode('utf-8')
+    stored = _dpapi(raw, True) if os.name == 'nt' else raw
     path.write_bytes(stored)
     if os.name != 'nt':
         try:
@@ -110,14 +117,31 @@ def _save_ics_url(url):
             pass
 
 
-def _load_ics_url():
+def _load_ics_urls():
     path = _ics_path()
     if not path.is_file():
-        return ''
+        return []
     raw = path.read_bytes()
     if os.name == 'nt':
         raw = _dpapi(raw, False)
-    return raw.decode('utf-8')
+    text = raw.decode('utf-8')
+    try:
+        urls = json.loads(text)
+    except ValueError:
+        urls = [text]
+    if not isinstance(urls, list) or not all(isinstance(url, str) for url in urls):
+        raise ValueError('The saved ICS calendar list is invalid.')
+    return urls
+
+
+def _load_ics_url():
+    """Compatibility helper for callers that only need the first saved feed."""
+    urls = _load_ics_urls()
+    return urls[0] if urls else ''
+
+
+def _ics_feed_id(url):
+    return hashlib.sha256(url.encode('utf-8')).hexdigest()[:16]
 
 
 def disconnect():
@@ -131,29 +155,94 @@ def disconnect():
 def connect_ics(url):
     url = str(url).strip()
     _validate_ics_url(url)
-    _save_ics_url(url)
-    return {'ics_connected': True, 'source': 'ics'}
+    urls = _load_ics_urls()
+    if url not in urls:
+        if len(urls) >= ICS_MAX_FEEDS:
+            raise ValueError(f'Sage supports up to {ICS_MAX_FEEDS} ICS calendars.')
+        urls.append(url)
+        _save_ics_urls(urls)
+    return {'ics_connected': True, 'source': 'ics', 'feed_id': _ics_feed_id(url),
+            'host': urlsplit(url).hostname}
 
 
-def disconnect_ics():
-    _ics_path().unlink(missing_ok=True)
-    return {'ics_connected': False}
+def disconnect_ics(feed_id=None):
+    if not feed_id:
+        _ics_path().unlink(missing_ok=True)
+        return {'ics_connected': False}
+    urls = _load_ics_urls()
+    remaining = [url for url in urls if _ics_feed_id(url) != str(feed_id)]
+    if len(remaining) == len(urls):
+        raise ValueError('ICS calendar not found.')
+    if remaining:
+        _save_ics_urls(remaining)
+    else:
+        _ics_path().unlink(missing_ok=True)
+    return {'ics_connected': bool(remaining)}
 
 
 def _validate_ics_url(url):
     try:
         parsed = urlsplit(url)
         valid = (parsed.scheme == 'https' and parsed.hostname and
-                 parsed.hostname.lower() in ICS_HOSTS and
                  parsed.username is None and parsed.password is None and
-                 parsed.port in (None, 443) and not parsed.fragment)
+                 parsed.port in (None, 443) and not parsed.fragment and
+                 len(url) <= 4096)
     except ValueError:
         valid = False
     if not valid:
-        raise ValueError('Use the HTTPS ICS publishing link copied from Outlook (outlook.live.com or outlook.office365.com).')
+        raise ValueError('Use an HTTPS ICS calendar link without credentials or a fragment.')
 
 
-class _OutlookRedirectHandler(HTTPRedirectHandler):
+def _public_ics_addresses(host, port):
+    try:
+        literal = ipaddress.ip_address(host)
+        addresses = [str(literal)]
+    except ValueError:
+        try:
+            addresses = list(dict.fromkeys(
+                result[4][0] for result in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+            ))
+        except socket.gaierror as exc:
+            raise ConnectionError(f'Could not resolve ICS calendar host {host}.') from exc
+    if not addresses:
+        raise ConnectionError(f'Could not resolve ICS calendar host {host}.')
+    for address in addresses:
+        try:
+            public = ipaddress.ip_address(address.split('%', 1)[0]).is_global
+        except ValueError:
+            public = False
+        if not public:
+            raise ValueError('ICS calendar hosts must resolve only to public IP addresses.')
+    return addresses
+
+
+class _PublicHTTPSConnection(http.client.HTTPSConnection):
+    def connect(self):
+        if self._tunnel_host:
+            raise ValueError('HTTPS proxies are not supported for ICS calendar feeds.')
+        errors = []
+        for address in _public_ics_addresses(self.host, self.port):
+            sock = None
+            try:
+                sock = socket.create_connection((address, self.port), self.timeout, self.source_address)
+                context = self._context or ssl.create_default_context()
+                self.sock = context.wrap_socket(sock, server_hostname=self.host)
+                return
+            except OSError as exc:
+                errors.append(exc)
+                if sock:
+                    sock.close()
+        if errors:
+            raise errors[-1]
+        raise ConnectionError(f'Could not connect to ICS calendar host {self.host}.')
+
+
+class _PublicHTTPSHandler(HTTPSHandler):
+    def https_open(self, request):
+        return self.do_open(_PublicHTTPSConnection, request, context=self._context)
+
+
+class _ICSRedirectHandler(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         _validate_ics_url(newurl)
         return super().redirect_request(req, fp, code, msg, headers, newurl)
@@ -345,23 +434,34 @@ def _parse_ics_events(content, start, end):
     return sorted(events, key=lambda event: datetime.fromisoformat(event['start']))
 
 
-def _ics_events_between(start, end):
-    url = _load_ics_url()
-    if not url:
-        raise PermissionError('Outlook is not connected. Connect it from Sage’s Daily briefing page.')
+def _ics_feed_events(url, start, end):
     _validate_ics_url(url)
+    host = urlsplit(url).hostname
+    opener = build_opener(ProxyHandler({}), _PublicHTTPSHandler(), _ICSRedirectHandler())
     request = Request(url, headers={'Accept': 'text/calendar', 'User-Agent': 'Sage calendar reader'})
-    opener = build_opener(_OutlookRedirectHandler())
     try:
         with opener.open(request, timeout=20) as response:
             content = response.read(ICS_MAX_BYTES + 1)
     except HTTPError as exc:
-        raise ConnectionError(f'Outlook calendar feed returned HTTP {exc.code}. Check the published link in Sage.') from exc
+        raise ConnectionError(f'ICS calendar feed at {host} returned HTTP {exc.code}. Check the published link.') from exc
     except (URLError, TimeoutError, OSError) as exc:
-        raise ConnectionError(f'Could not fetch the Outlook calendar feed: {exc}') from exc
+        raise ConnectionError(f'Could not fetch the ICS calendar feed at {host}: {exc}') from exc
     if len(content) > ICS_MAX_BYTES:
-        raise ValueError('Outlook calendar feed is larger than Sage’s 2 MB limit.')
-    return _parse_ics_events(content.decode('utf-8-sig'), start, end)
+        raise ValueError(f'ICS calendar feed at {host} is larger than Sage’s 2 MB limit.')
+    events = _parse_ics_events(content.decode('utf-8-sig'), start, end)
+    for event in events:
+        event['calendar'] = host
+    return events
+
+
+def _ics_events_between(start, end):
+    urls = _load_ics_urls()
+    if not urls:
+        raise PermissionError('No ICS calendars are connected. Add a feed from Sage’s Daily briefing page.')
+    with ThreadPoolExecutor(max_workers=min(len(urls), 5)) as executor:
+        futures = [executor.submit(_ics_feed_events, url, start, end) for url in urls]
+        events = [event for future in futures for event in future.result()]
+    return sorted(events, key=lambda event: datetime.fromisoformat(event['start']))
 
 
 def _post_form(url, fields):
@@ -514,7 +614,8 @@ def _graph_request(path_or_url, method='GET', body=None, token=None, retry=True)
 
 def status():
     token = _load_token()
-    ics_connected = bool(_load_ics_url())
+    urls = _load_ics_urls()
+    ics_connected = bool(urls)
     graph_connected = bool(token)
     source = 'ics' if ics_connected else 'graph' if graph_connected else ''
     granted = set(str((token or {}).get('scope', '')).split())
@@ -522,6 +623,7 @@ def status():
     mail_drafts_connected = 'Mail.ReadWrite' in granted
     return {'connected': graph_connected, 'graph_connected': graph_connected, 'mail_connected': mail_connected,
             'mail_drafts_connected': mail_drafts_connected, 'ics_connected': ics_connected,
+            'ics_feeds': [{'id': _ics_feed_id(url), 'host': urlsplit(url).hostname} for url in urls],
             'calendar_connected': graph_connected or ics_connected, 'source': source,
             'account': (token or {}).get('account', ''), 'tenant': _setting('tenant', 'common'),
             'client_id_configured': bool(_setting('client_id')), 'token_storage': 'Windows DPAPI' if os.name == 'nt' else 'local file permissions'}
@@ -546,7 +648,7 @@ def _event_time(value):
 
 
 def events_between(start, end):
-    if _load_ics_url():
+    if _load_ics_urls():
         return _ics_events_between(start, end)
     return _graph_events_between(start, end)
 

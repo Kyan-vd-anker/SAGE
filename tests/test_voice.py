@@ -168,7 +168,8 @@ class VoiceGatewayStateTests(unittest.TestCase):
         from unittest.mock import patch
         from sage import voice
 
-        expected = {'version': 3, 'ring': 'thinking', 'asleep': False, 'device_online': True}
+        expected = {'version': 3, 'ring': 'thinking', 'asleep': False, 'device_online': True,
+                    'light_off': False}
         handler = SimpleNamespace(
             path='/api/voice/state?since=2&wait=4',
             _authorize=lambda: True,
@@ -177,6 +178,15 @@ class VoiceGatewayStateTests(unittest.TestCase):
         with patch('sage.voice.wait_state', return_value=expected) as wait_state:
             self.assertEqual(voice.Handler.do_GET(handler), (expected, 200))
         wait_state.assert_called_once_with(2, 4.0)
+
+    def test_speaker_light_is_off_from_2300_until_0800(self):
+        from datetime import datetime, timezone
+        from sage import voice
+
+        for hour, expected in ((22, False), (23, True), (7, True), (8, False)):
+            with self.subTest(hour=hour):
+                now = datetime(2026, 11, 5, hour, tzinfo=timezone.utc)
+                self.assertEqual(voice._speaker_light_off(now), expected)
 
     def test_gateway_rejects_invalid_ring_state_query(self):
         from types import SimpleNamespace

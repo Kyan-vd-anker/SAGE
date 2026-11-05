@@ -135,6 +135,11 @@ def online():
     return bool(_last_poll and time.time() - _last_poll < 60)
 
 
+def _speaker_light_off(now=None):
+    now = now or reminders.local_now()
+    return now.hour >= 23 or now.hour < 8
+
+
 def _effective_ring():
     if _error_until > time.time():
         return 'error'
@@ -151,7 +156,7 @@ def _effective_ring():
 
 def _publish_state():
     global _state_version, _state_last
-    snap = (_effective_ring(), _asleep, online())
+    snap = (_effective_ring(), _asleep, online(), _speaker_light_off())
     with _state_cond:
         if snap != _state_last:
             _state_last = snap
@@ -160,7 +165,8 @@ def _publish_state():
 
 
 def state_snapshot():
-    return {'version': _state_version, 'ring': _effective_ring(), 'asleep': _asleep, 'device_online': online()}
+    return {'version': _state_version, 'ring': _effective_ring(), 'asleep': _asleep,
+            'device_online': online(), 'light_off': _speaker_light_off()}
 
 
 def wait_state(since, wait):

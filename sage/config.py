@@ -20,6 +20,7 @@ PROJECT_WORK_TIMEOUT = 600
 ALLOWED_APPS = os.getenv("SAGE_ALLOWED_APPS", "{}")
 WEB_SEARCH_ENABLED = os.getenv("SAGE_WEB_SEARCH_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 WAKE_WORD = os.getenv("SAGE_WAKE_WORD", "sage")
+PASSWORD = os.getenv("SAGE_PASSWORD", "")  # dashboard login; empty = no login (set it in the ignored start-sage.local.bat)
 HA_TOKEN = os.getenv("SAGE_HA_TOKEN", "")
 SHORTCUT_TOKEN = os.getenv("SAGE_SHORTCUT_TOKEN", "")
 TELEGRAM_BOT_TOKEN = os.getenv("SAGE_TELEGRAM_BOT_TOKEN", "")

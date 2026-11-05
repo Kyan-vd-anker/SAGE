@@ -20,14 +20,17 @@ static const char *TAG = "board-light";
 static led_strip_handle_t strip;
 static portMUX_TYPE state_mux = portMUX_INITIALIZER_UNLOCKED;
 static board_light_state_t ring_state = BOARD_LIGHT_IDLE;
+static bool ring_light_off;
 
 static void light_task(void *arg)
 {
     const TickType_t frame_delay = pdMS_TO_TICKS(LIGHT_FRAME_MS);
     for (;;) {
         board_light_state_t state;
+        bool light_off;
         portENTER_CRITICAL(&state_mux);
         state = ring_state;
+        light_off = ring_light_off;
         portEXIT_CRITICAL(&state_mux);
 
         const int64_t now_us = esp_timer_get_time();
@@ -101,7 +104,7 @@ static void light_task(void *arg)
             } else if (level > 1.0f) {
                 level = 1.0f;
             }
-            float scale = level * LIGHT_MAX_BRIGHTNESS;
+            float scale = light_off ? 0.0f : level * LIGHT_MAX_BRIGHTNESS;
             esp_err_t err = led_strip_set_pixel(
                 strip, (uint32_t)i, (uint8_t)(red * scale), (uint8_t)(green * scale),
                 (uint8_t)(blue * scale));
@@ -155,5 +158,12 @@ void board_light_set_state(board_light_state_t state)
 {
     portENTER_CRITICAL(&state_mux);
     ring_state = state;
+    portEXIT_CRITICAL(&state_mux);
+}
+
+void board_light_set_off(bool off)
+{
+    portENTER_CRITICAL(&state_mux);
+    ring_light_off = off;
     portEXIT_CRITICAL(&state_mux);
 }

@@ -30,8 +30,9 @@ While asleep: reminders, the brief and anything Sage says by itself wait (up to 
 
 **Wake-up from your phone:** when the iPhone Shortcut sends the wake signal, the wall display wakes up and shows the whole brief
 full screen until you tap anywhere on it (or press "Got it"). The speaker wakes from sleep mode too and reads the brief.
-The 07:30 scheduled brief does not take over the wall screen; it is only spoken. A ringing alarm or timer still shows on top
+The 08:30 scheduled brief does not take over the wall screen; it is only spoken. A ringing alarm or timer still shows on top
 of the brief, and the brief is waiting when you dismiss it. (If the wall display is off or restarting at that moment it misses the brief.)
+The speaker's light ring is off from 23:00 until 08:00 local time; audio and alarms continue to work.
 
 ## Security
 1. **Only configured voice devices can talk to Sage.** Their addresses must be in `SAGE_ALLOWED_CLIENT_IPS`. With `SAGE_VOICE_SECRET` set,
