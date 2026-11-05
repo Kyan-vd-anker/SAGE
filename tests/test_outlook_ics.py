@@ -45,6 +45,17 @@ class OutlookIcsTests(unittest.TestCase):
             with self.subTest(url=url), self.assertRaises(ValueError):
                 outlook.connect_ics(url)
 
+    def test_connect_normalizes_iphone_webcal_links_to_https(self):
+        webcal_url = 'webcal://p123-caldav.icloud.com/published/secret/calendar.ics'
+        https_url = 'https://p123-caldav.icloud.com/published/secret/calendar.ics'
+        with patch('sage.outlook._dpapi', side_effect=lambda data, protect: data):
+            first = outlook.connect_ics(webcal_url)
+            second = outlook.connect_ics(https_url)
+
+        self.assertEqual(outlook._load_ics_urls(), [https_url])
+        self.assertEqual(first['feed_id'], second['feed_id'])
+        self.assertEqual(first['host'], 'p123-caldav.icloud.com')
+
     def test_parses_and_filters_timed_and_all_day_events(self):
         feed = '\r\n'.join([
             'BEGIN:VCALENDAR',

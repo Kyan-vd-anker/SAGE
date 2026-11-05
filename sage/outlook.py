@@ -153,7 +153,7 @@ def disconnect():
 
 
 def connect_ics(url):
-    url = str(url).strip()
+    url = _normalize_ics_url(str(url).strip())
     _validate_ics_url(url)
     urls = _load_ics_urls()
     if url not in urls:
@@ -163,6 +163,13 @@ def connect_ics(url):
         _save_ics_urls(urls)
     return {'ics_connected': True, 'source': 'ics', 'feed_id': _ics_feed_id(url),
             'host': urlsplit(url).hostname}
+
+
+def _normalize_ics_url(url):
+    parsed = urlsplit(url)
+    if parsed.scheme.lower() in ('webcal', 'webcals'):
+        return parsed._replace(scheme='https').geturl()
+    return url
 
 
 def disconnect_ics(feed_id=None):
@@ -190,7 +197,7 @@ def _validate_ics_url(url):
     except ValueError:
         valid = False
     if not valid:
-        raise ValueError('Use an HTTPS ICS calendar link without credentials or a fragment.')
+        raise ValueError('Use an HTTPS or webcal ICS calendar link without credentials or a fragment.')
 
 
 def _public_ics_addresses(host, port):

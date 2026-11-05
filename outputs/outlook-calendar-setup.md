@@ -5,10 +5,10 @@ Sage supports two connection methods. For simply viewing your agenda, use the pu
 ## Option 1: Published ICS links (read-only)
 
 1. In your calendar provider, find its publish, share, or export option for an **ICS/iCalendar** feed. For Outlook on the web, open **Settings → Calendar → Shared calendars → Publish a calendar**, choose a calendar and permission level, then select **Publish**.
-2. Copy the HTTPS ICS link and paste it into **Daily briefing → Add an ICS calendar** in Sage.
+2. Copy the calendar's HTTPS ICS link or iPhone `webcal://` subscription link and paste it into **Daily briefing → Add an ICS calendar** in Sage. Sage securely converts `webcal://` links to HTTPS before fetching.
 3. Repeat for each calendar you want to include. Sage supports up to 20 feeds, and each can be removed separately.
 
-Sage fetches every connected feed when it displays or uses the agenda. ICS feeds are read-only and take precedence over Microsoft Graph for reading events. Sage accepts HTTPS feeds from any provider, but only fetches hosts that resolve exclusively to public IP addresses. Each feed is limited to 2 MB. Published links are bearer secrets: anyone who obtains one may view the calendar details allowed by its publishing permissions. Sage stores links locally (protected with Windows DPAPI on Windows, or local file permissions elsewhere), never displays them again, and lets you remove feeds individually. You can also unpublish a feed with its provider to revoke the link.
+Sage fetches every connected feed when it displays or uses the agenda. ICS feeds are read-only and take precedence over Microsoft Graph for reading events. Sage accepts HTTPS and iPhone `webcal://` feeds from any provider, but only fetches hosts that resolve exclusively to public IP addresses. Each feed is limited to 2 MB. Published links are bearer secrets: anyone who obtains one may view the calendar details allowed by its publishing permissions. Sage stores links locally (protected with Windows DPAPI on Windows, or local file permissions elsewhere), never displays them again, and lets you remove feeds individually. You can also unpublish a feed with its provider to revoke the link.
 
 To create Outlook events, connect Microsoft Graph as well. Calendar publishing may be disabled by your organization, and availability can depend on the account type.
 
@@ -37,7 +37,7 @@ Use **Disconnect Graph** to delete Sage's saved token. You can also revoke the a
 
 ## Troubleshooting
 
-- **ICS link rejected:** use an HTTPS ICS link without embedded credentials or a fragment.
+- **ICS link rejected:** use an HTTPS or `webcal://` ICS link without embedded credentials or a fragment.
 - **ICS feed cannot be fetched:** confirm the provider still publishes the feed, that it resolves to public IP addresses, and that your network can reach it.
 - **Invalid client / app not found:** verify the client ID and selected tenant/account type.
 - **Public client flow disabled:** turn on the public-client option under Authentication and save the registration.
