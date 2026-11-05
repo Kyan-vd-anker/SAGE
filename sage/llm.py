@@ -169,7 +169,7 @@ class StreamCancel:
             except Exception: pass
 
 
-def chat_stream(messages, tools=None, max_tokens=None, on_token=None, cancel=None, timeout=300, model=None):
+def chat_stream(messages, tools=None, max_tokens=None, on_token=None, cancel=None, timeout=600, model=None):
     """Foreground chat that streams: on_token(text) is called for every piece of text as it is generated.
     Returns the finished assistant message (content and any tool_calls). `timeout` applies to silence
     between pieces, not to the whole reply."""
@@ -223,7 +223,7 @@ def chat_stream(messages, tools=None, max_tokens=None, on_token=None, cancel=Non
         _release()
 
 
-def chat_message(messages, tools=None, timeout=300, max_tokens=None, background=False, require_tool=False, force_schema=False, model=None):
+def chat_message(messages, tools=None, timeout=600, max_tokens=None, background=False, require_tool=False, force_schema=False, model=None):
     global _active_background_response
     model = model or MODEL
     # User chat has priority over queued background model calls. In-flight
@@ -286,7 +286,7 @@ def chat_message(messages, tools=None, timeout=300, max_tokens=None, background=
             with _priority: _active_background_response=None
         _release()
 
-def chat(messages, timeout=300, max_tokens=None, background=False, model=None):
+def chat(messages, timeout=600, max_tokens=None, background=False, model=None):
     """Plain text completion used by background jobs and older callers."""
     return chat_message(messages, timeout=timeout, max_tokens=max_tokens, background=background, model=model).get('content','')
 

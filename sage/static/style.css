@@ -13,3 +13,97 @@ input,textarea,select{background:var(--input-bg);border:1px solid var(--border);
 .sectionHead{display:flex;justify-content:space-between;margin-bottom:18px}.cards{display:grid;gap:10px}.card h3{font-size:14px}.card p{color:var(--muted);line-height:1.55}.meta{color:var(--muted)!important;font:10px var(--mono);margin-top:9px}.row{display:flex;gap:9px}.hidden{display:none!important}.pill,.badge{padding:4px 8px;border-radius:999px;background:var(--surface-raised);color:var(--muted);font-size:10px}.empty{color:var(--muted);text-align:center;padding:27px}.toast{position:fixed;bottom:22px;right:24px;z-index:40;background:var(--surface-raised);border:1px solid var(--border);padding:12px 16px;border-radius:9px}.subhead{margin:22px 0 8px}.safetyNotice{padding:12px;border:1px solid var(--alert);border-radius:10px;margin-bottom:12px}
 body:has(.page.active:not(#page-chat)) #agentDrawer{display:none}body:has(.page.active:not(#page-chat)) main{width:calc(100% - 220px)}body:has(#page-chat.active) main{width:calc(100% - 220px);padding-right:362px}@media(max-width:1180px){#agentDrawer{width:300px}body:has(#page-chat.active) main{padding-right:322px}}@media(max-width:980px){#agentDrawer{display:none!important}body:has(#page-chat.active) main{padding-right:22px}}@media(max-width:680px){.sidebar{width:64px;padding:14px 6px}.brand{padding:0 8px 16px}.brand>div:not(.mark),#nav span,.sidefoot span:not(.dot),.sidefoot small{display:none}#nav button{justify-content:center}main,body:has(#page-chat.active) main,body:has(.page.active:not(#page-chat)) main{margin-left:64px;width:calc(100% - 64px);padding:0 12px 20px}.bubble{max-width:92%}.composeActions{flex-direction:column}.localBadge{display:none}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
+
+/* Sage's grouped, settings-inspired shell. */
+:root{--surface:#111720;--surface-raised:#18212c;--border:#263241;--sidebar:#0b1017;--radius:14px;--mono:ui-monospace,SFMono-Regular,Consolas,monospace}
+body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;letter-spacing:.005em}
+.sidebar{width:248px;padding:24px 14px 16px;background:color-mix(in srgb,var(--sidebar) 96%,var(--surface));border-right-color:color-mix(in srgb,var(--border) 78%,transparent);transition:transform .22s ease}
+.brand{padding:0 10px 24px}.brand b{font-size:18px;letter-spacing:-.025em}.brand small{font-family:inherit;font-size:10px;letter-spacing:.09em}
+#nav{gap:7px;padding:0 1px 12px;scrollbar-color:var(--border) transparent;scrollbar-width:thin}
+.navGroup{min-width:0;border:1px solid transparent;border-radius:12px}
+.navGroup[open]{background:color-mix(in srgb,var(--surface) 44%,transparent)}
+.navGroup summary{position:relative;display:flex;align-items:center;min-height:36px;padding:0 32px 0 12px;color:var(--muted);font-size:11px;font-weight:650;letter-spacing:.055em;text-transform:uppercase;list-style:none;cursor:pointer;user-select:none}
+.navGroup summary::-webkit-details-marker{display:none}
+.navGroup summary::after{content:"";position:absolute;right:13px;width:7px;height:7px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg) translateY(-2px);transition:transform .18s ease}
+.navGroup[open] summary::after{transform:rotate(225deg) translate(-1px,-1px)}
+.navGroup summary:hover{color:var(--text)}
+.navGroupItems{padding:0 5px 6px}
+#nav button{width:100%;height:39px;min-height:39px;flex-basis:39px;gap:11px;padding:0 10px;border:0;border-radius:9px;color:color-mix(in srgb,var(--text) 68%,var(--muted));font-size:13px;transition:background .16s ease,color .16s ease}
+#nav button:hover{background:color-mix(in srgb,var(--surface-raised) 70%,transparent);color:var(--text)}
+#nav button.active{background:color-mix(in srgb,var(--idle) 17%,var(--surface-raised));color:var(--text);border:0;box-shadow:inset 2px 0 var(--idle)}
+.sidefoot{padding:14px 9px 2px;border-top-color:var(--border)}
+main{margin-left:248px;width:calc(100% - 248px);padding:0 30px 34px}
+main>header{height:74px;margin-bottom:26px;border-bottom-color:color-mix(in srgb,var(--border) 70%,transparent)}
+h1{font-size:20px;letter-spacing:-.035em}header p,.sectionHead p{font-size:13px}
+.localBadge{background:color-mix(in srgb,var(--surface) 70%,transparent);border-color:var(--border);letter-spacing:.035em}
+.page{max-width:1120px;margin:0 auto}
+.sectionHead{align-items:center;gap:18px;margin:0 0 22px}
+.sectionHead h2{font-size:22px;letter-spacing:-.035em;font-weight:650}
+.sectionHead p{max-width:680px;line-height:1.5}
+.subhead,.subhead2{margin:26px 0 10px;font-size:15px;font-weight:650;letter-spacing:-.015em}
+.cards{gap:8px}
+.card,.formCard,.contextItem{border-color:color-mix(in srgb,var(--border) 76%,transparent);border-radius:13px;padding:16px;background:color-mix(in srgb,var(--surface) 82%,transparent);box-shadow:0 1px 1px rgba(0,0,0,.08)}
+.card h3{font-size:14px;font-weight:620;letter-spacing:-.012em}
+.card p{margin-top:7px;line-height:1.55}
+.formCard{display:grid;gap:10px}
+.composer{border-radius:16px;padding:14px 16px;box-shadow:0 10px 34px rgba(0,0,0,.12)}
+.composer textarea{line-height:1.55}
+input,textarea,select{border-color:var(--border);border-radius:10px}
+button,.navGroup summary,.card,.formCard{ -webkit-tap-highlight-color:transparent}
+.iconBtn,.softBtn,.primary{min-height:38px;border-radius:10px;transition:filter .15s ease,background-color .15s ease,border-color .15s ease}
+.iconBtn:hover,.softBtn:hover{background:var(--surface-raised);border-color:color-mix(in srgb,var(--border) 68%,var(--muted))}
+.primary:hover{filter:brightness(1.08)}
+.safetyNotice{border-radius:12px;padding:14px 16px;background:color-mix(in srgb,var(--alert) 8%,var(--surface));line-height:1.5}
+.empty{padding:34px 20px}
+#agentDrawer{top:74px;width:320px;padding:22px 18px;background:color-mix(in srgb,var(--sidebar) 94%,var(--surface));border-left-color:color-mix(in srgb,var(--border) 75%,transparent)}
+.drawerHead{font-family:inherit;font-weight:650;letter-spacing:.07em}
+body:has(.page.active:not(#page-chat)) main{width:calc(100% - 248px)}
+body:has(#page-chat.active) main{width:calc(100% - 248px);padding-right:350px}
+.navToggle,.navScrim{display:none}
+@media(max-width:1180px){
+  #agentDrawer{width:292px}
+  body:has(#page-chat.active) main{padding-right:318px}
+  main{padding-left:24px;padding-right:24px}
+}
+@media(max-width:980px){
+  #agentDrawer{display:none!important}
+  body:has(#page-chat.active) main{padding-right:24px}
+}
+@media(max-width:760px){
+  .sidebar{position:fixed;inset:0 auto 0 0;width:min(292px,86vw);padding:20px 14px 14px;transform:translateX(-105%);box-shadow:18px 0 54px rgba(0,0,0,.38);z-index:12}
+  .brand>div:not(.mark){display:block}
+  #nav span{display:inline}
+  #nav button{justify-content:flex-start}
+  .sidefoot span:not(.dot){display:inline}
+  .sidefoot small{display:block}
+  body.navOpen .sidebar{transform:translateX(0)}
+  .navScrim{position:fixed;inset:0;z-index:11;background:rgba(0,0,0,.48);backdrop-filter:blur(3px)}
+  body.navOpen .navScrim{display:block}
+  .navToggle{display:grid;place-items:center;flex:0 0 40px;width:40px;height:40px;padding:0;border:1px solid var(--border);border-radius:11px;background:var(--surface);color:var(--text);font-size:17px}
+  main,body:has(#page-chat.active) main,body:has(.page.active:not(#page-chat)) main{margin-left:0;width:100%;padding:0 22px 28px}
+  main>header{gap:12px}
+  main>header>div:first-of-type{flex:1;min-width:0}
+  .headerRight{gap:6px}
+  .localBadge{padding:6px 8px}
+  .page{max-width:100%}
+  .sectionHead h2{font-size:20px}
+}
+@media(max-width:560px){
+  main,body:has(#page-chat.active) main,body:has(.page.active:not(#page-chat)) main{padding:0 14px 22px}
+  main>header{height:68px;margin-bottom:18px}
+  h1{font-size:18px}
+  header p{font-size:11px}
+  .headerRight .localBadge{display:none}
+  .sectionHead{align-items:flex-start;flex-direction:column;margin-bottom:16px}
+  .sectionHead>.row{flex-wrap:wrap}
+  .sectionHead h2{font-size:19px}
+  .card,.formCard,.contextItem{padding:13px}
+  .composer{padding:12px}
+  .composeActions>div{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+  .composeActions button{width:100%}
+  .bubble{max-width:96%}
+  .row{flex-wrap:wrap}
+}
+@media(prefers-reduced-motion:reduce){
+  .sidebar,.navGroup summary::after,#nav button,.iconBtn,.softBtn,.primary{transition:none}
+}

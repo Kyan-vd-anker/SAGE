@@ -16,7 +16,7 @@ class LlmTests(unittest.TestCase):
             result = llm.chat_message([{'role': 'user', 'content': 'question'}],model='test-model')
 
         self.assertEqual(result, {'content': 'answer'})
-        self.assertEqual(urlopen.call_args.kwargs['timeout'], 300)
+        self.assertEqual(urlopen.call_args.kwargs['timeout'], 600)
         self.assertEqual(json.loads(urlopen.call_args.args[0].data)['model'],'test-model')
 
     def test_chat_uses_longer_default_timeout(self):
@@ -24,7 +24,18 @@ class LlmTests(unittest.TestCase):
             result = llm.chat([{'role': 'user', 'content': 'question'}])
 
         self.assertEqual(result, 'answer')
-        self.assertEqual(chat_message.call_args.kwargs['timeout'], 300)
+        self.assertEqual(chat_message.call_args.kwargs['timeout'], 600)
+
+    def test_chat_stream_uses_longer_default_timeout(self):
+        response = MagicMock()
+        response.status = 200
+        response.__iter__.return_value = [b'{"message":{"content":"answer"},"done":true}\n']
+
+        with patch('sage.llm.http.client.HTTPConnection', return_value=MagicMock(getresponse=lambda: response)) as connection:
+            result = llm.chat_stream([{'role': 'user', 'content': 'question'}],model='test-model')
+
+        self.assertEqual(result['content'],'answer')
+        self.assertEqual(connection.call_args.kwargs['timeout'],600)
 
     def test_model_for_request_selects_coder_for_code_and_default_for_other_requests(self):
         self.assertEqual(llm.model_for_request('Write a Python function to add two numbers.'),llm.CODING_MODEL)

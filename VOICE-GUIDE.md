@@ -75,6 +75,8 @@ When a request needs approval the page shows Approve / Cancel buttons (only for 
 Limits: the page only listens while it is open and the screen is on (iOS pauses web pages in the background), and Safari only allows the
 microphone over HTTPS, which is why it goes through Tailscale.
 
+Voice replies use the current utterance and, only when relevant, a small selection of saved conversation context; Sage does not send the full conversation history. Simple greetings and check-ins skip retrieved conversation, memory, project context, and tool selection. Ollama requests allow up to 10 minutes without response data before timing out.
+
 **B. A Shortcut (works from the lock screen, with Siri, AirPods, CarPlay).** Uses the iPhone's own dictation and voice:
 1. **Dictate Text** (stop listening: after pause).
 2. **Get Contents of URL**: `https://<your-pc>.<your-tailnet>.ts.net:8443/api/voice/phone/text`, method POST, header
@@ -92,7 +94,23 @@ microphone over HTTPS, which is why it goes through Tailscale.
    "$HOME/.local/share/sage-voice/bin/pip" install faster-whisper
    ```
    The first speech-recognition request downloads the Whisper model selected by `SAGE_STT_MODEL` (default `small`).
-2. Generate a private phone token with `python3 -c 'import secrets; print(secrets.token_urlsafe(32))'`. Add it to Sage's user service without putting it in chat or a public file:
+2. For more natural, locally generated speech, install Piper and medium-quality English (UK) and Dutch (Netherlands) voices:
+   ```
+   "$HOME/.local/share/sage-voice/bin/pip" install piper-tts
+   mkdir -p "$HOME/.local/share/sage-voice/voices"
+   /usr/bin/curl -fL "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alan/medium/en_GB-alan-medium.onnx?download=true" -o "$HOME/.local/share/sage-voice/voices/en_GB-alan-medium.onnx"
+   /usr/bin/curl -fL "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alan/medium/en_GB-alan-medium.onnx.json?download=true" -o "$HOME/.local/share/sage-voice/voices/en_GB-alan-medium.onnx.json"
+   /usr/bin/curl -fL "https://huggingface.co/rhasspy/piper-voices/resolve/main/nl/nl_NL/ronnie/medium/nl_NL-ronnie-medium.onnx?download=true" -o "$HOME/.local/share/sage-voice/voices/nl_NL-ronnie-medium.onnx"
+   /usr/bin/curl -fL "https://huggingface.co/rhasspy/piper-voices/resolve/main/nl/nl_NL/ronnie/medium/nl_NL-ronnie-medium.onnx.json?download=true" -o "$HOME/.local/share/sage-voice/voices/nl_NL-ronnie-medium.onnx.json"
+   ```
+   Then run `systemctl --user edit sage` and add these lines in the `[Service]` section, keeping any existing settings. Point `SAGE_PIPER_CMD` at the venv executable because systemd does not automatically add the venv to `PATH`:
+   ```
+   Environment="SAGE_PIPER_CMD=%h/.local/share/sage-voice/bin/piper"
+   Environment="SAGE_PIPER_VOICE_EN=%h/.local/share/sage-voice/voices/en_GB-alan-medium.onnx"
+   Environment="SAGE_PIPER_VOICE_NL=%h/.local/share/sage-voice/voices/nl_NL-ronnie-medium.onnx"
+   ```
+   Piper is tried before eSpeak, which remains installed as a fallback. The selected voices are general-purpose voices, not an imitation of a specific character.
+3. Generate a private phone token with `python3 -c 'import secrets; print(secrets.token_urlsafe(32))'`. Add it to Sage's user service without putting it in chat or a public file:
    ```
    systemctl --user edit sage
    ```
@@ -103,8 +121,8 @@ microphone over HTTPS, which is why it goes through Tailscale.
    ExecStart=%h/.local/share/sage-voice/bin/python -m sage
    Environment="SAGE_PHONE_TOKEN=replace-with-your-generated-token"
    ```
-   The venv Python runs Sage from the service's existing project directory. Keep the phone token different from the speaker and Shortcut tokens.
-3. Reload and restart Sage, then check `systemctl --user status sage`. For local diagnostics, run `curl http://127.0.0.1:8002/api/voice/status`; expect `stt: true` and `espeak` or `piper` in `tts_engines`:
+   Keep the Piper settings from step 2 in the same `[Service]` section. The venv Python runs Sage from the service's existing project directory. Keep the phone token different from the speaker and Shortcut tokens.
+4. Reload and restart Sage, then check `systemctl --user status sage`. For local diagnostics, run `curl http://127.0.0.1:8002/api/voice/status`; expect `stt: true` and both `piper` and `espeak` in `tts_engines`:
    ```
    systemctl --user daemon-reload
    systemctl --user restart sage
