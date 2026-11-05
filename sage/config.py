@@ -46,3 +46,24 @@ VOICE_PIPER_VOICES = {"nl": os.getenv("SAGE_PIPER_VOICE_NL", ""), "en": os.geten
 VOICE_MAX_CHARS = int(os.getenv("SAGE_VOICE_MAX_CHARS", "700"))
 VOICE_BRIEF_MAX_CHARS = int(os.getenv("SAGE_VOICE_BRIEF_MAX_CHARS", "1600"))
 VOICE_ALARM_BRIEF = os.getenv("SAGE_VOICE_ALARM_BRIEF", "1").lower() in _ON
+BLE_PRESENCE_ENABLED = os.getenv("SAGE_BLE_PRESENCE", "0").lower() in _ON
+BLE_NODE_ROOMS = {}
+for _ble_node in os.getenv(
+    "SAGE_BLE_NODE_ROOMS",
+    "bedroom-speaker:bedroom,engineering-c3:engineering",
+).split(","):
+    if ":" in _ble_node:
+        _node, _room = (part.strip() for part in _ble_node.split(":", 1))
+        if _node and _room:
+            BLE_NODE_ROOMS[_node] = _room
+BLE_NEAR_RSSI = int(os.getenv("SAGE_BLE_NEAR_RSSI", "-65"))
+BLE_AWAY_SECONDS = int(os.getenv("SAGE_BLE_AWAY_SECONDS", "600"))
+BLE_NODE_TIMEOUT_SECONDS = int(os.getenv("SAGE_BLE_NODE_TIMEOUT_SECONDS", "90"))
+if not -127 <= BLE_NEAR_RSSI <= 0:
+    raise ValueError("SAGE_BLE_NEAR_RSSI must be between -127 and 0")
+if BLE_AWAY_SECONDS <= 0:
+    raise ValueError("SAGE_BLE_AWAY_SECONDS must be positive")
+if BLE_NODE_TIMEOUT_SECONDS <= 0:
+    raise ValueError("SAGE_BLE_NODE_TIMEOUT_SECONDS must be positive")
+if BLE_PRESENCE_ENABLED and not {"bedroom", "engineering"}.issubset(BLE_NODE_ROOMS.values()):
+    raise ValueError("SAGE_BLE_NODE_ROOMS must include bedroom and engineering receivers")

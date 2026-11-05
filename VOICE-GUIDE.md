@@ -34,11 +34,11 @@ The 07:30 scheduled brief does not take over the wall screen; it is only spoken.
 of the brief, and the brief is waiting when you dismiss it. (If the wall display is off or restarting at that moment it misses the brief.)
 
 ## Security
-1. **Only your speaker can talk to Sage.** The address must be in `SAGE_ALLOWED_CLIENT_IPS`. With `SAGE_VOICE_SECRET` set,
+1. **Only configured voice devices can talk to Sage.** Their addresses must be in `SAGE_ALLOWED_CLIENT_IPS`. With `SAGE_VOICE_SECRET` set,
    every request must also be signed (HMAC-SHA256 over time, method, path and body, see `voice_util.sign`), so a captured
    request cannot be replayed (90 s window, each signature once) or edited. Without a secret, `SAGE_VOICE_TOKEN` is checked.
    The secret is compiled into the firmware, so do not share a preconfigured firmware image; rotate the secret if the
-   board or image is lost. To revoke the speaker, change the secret and restart Sage. Programs on the Sage PC itself
+   board or image is lost. To revoke a device, change the secret and restart Sage. Programs on the Sage PC itself
    are not asked for the secret. The gateway uses plain HTTP: HMAC authenticates requests but does not encrypt audio.
    Keep port 8002 on a trusted private LAN and never forward it to the public internet.
 2. **Lockout:** 5 refused requests within 10 minutes block that address for 10 minutes and show a warning on the wall display.
@@ -159,6 +159,7 @@ brief is unchanged.
    Replace the IP with the speaker's reserved address. Generate a secret with
    `python -c "import secrets; print(secrets.token_urlsafe(32))"` and keep it private. Do not put these values in `start-sage.bat`.
    `SAGE_VOICE_HOST` is separate from `SAGE_HOST`, so this does not expose the dashboard.
+   Add each reserved BLE receiver address to `SAGE_ALLOWED_CLIENT_IPS` when enabling BLE presence. See the [ESP32-C3 BLE presence guide](firmware/esp32-c3/README.md) for the 10-minute arrival-greeting setup.
 5. Open port 8002 on the Windows firewall for the **Private** profile only (admin prompt):
    `netsh advfirewall firewall add rule name="Sage voice" dir=in action=allow protocol=TCP localport=8002 profile=private remoteip=192.168.1.50`
    Do not forward the port from your router or expose it to the public internet.

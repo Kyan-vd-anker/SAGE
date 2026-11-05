@@ -17,6 +17,25 @@ config SAGE_VOICE_SECRET
     help
         Use the same random secret as SAGE_VOICE_SECRET on the Sage PC.
 
+config SAGE_BLE_PRESENCE
+    bool "Enable bedroom BLE presence greetings"
+    default n
+    depends on BT_ENABLED && BT_BLUEDROID_ENABLED && BT_CONTROLLER_ENABLED && BT_BLE_ENABLED
+    help
+        Scan for the configured Sage BLE beacon and report bedroom sightings to Sage.
+
+config SAGE_BLE_NODE_ID
+    string "BLE receiver node ID"
+    default "bedroom-speaker"
+    depends on SAGE_BLE_PRESENCE
+
+config SAGE_BLE_SERVICE_UUID
+    int "BLE beacon service UUID"
+    range 61440 65535
+    default 65520
+    help
+        Use the same private 16-bit UUID on the carried beacon and all receivers.
+
 config SAGE_CONFIG_PASSWORD
     string "Speaker setup page password"
     default ""

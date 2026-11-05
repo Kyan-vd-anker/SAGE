@@ -28,6 +28,9 @@
 #include "mbedtls/md.h"
 #include "mbedtls/base64.h"
 #include "nvs_flash.h"
+#if CONFIG_SAGE_BLE_PRESENCE
+#include "sage_ble.h"
+#endif
 #include "lwip/inet.h"
 #include "esp_afe_config.h"
 #include "esp_afe_sr_iface.h"
@@ -528,6 +531,46 @@ static void report_ring_task(void *arg)
     }
 }
 
+#if CONFIG_SAGE_BLE_PRESENCE
+static bool valid_ble_node_id(const char *node)
+{
+    if (!node || !node[0] || strlen(node) > 40) {
+        return false;
+    }
+    for (const char *character = node; *character; ++character) {
+        if (!((*character >= 'a' && *character <= 'z') ||
+              (*character >= 'A' && *character <= 'Z') ||
+              (*character >= '0' && *character <= '9') ||
+              *character == '-' || *character == '_')) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void ble_presence_task(void *arg)
+{
+    for (;;) {
+        int rssi = sage_ble_last_rssi(15000);
+        char body[112];
+        int size = rssi == -128
+                       ? snprintf(body, sizeof(body),
+                                  "{\"node\":\"%s\",\"rssi\":null}",
+                                  CONFIG_SAGE_BLE_NODE_ID)
+                       : snprintf(body, sizeof(body),
+                                  "{\"node\":\"%s\",\"rssi\":%d}",
+                                  CONFIG_SAGE_BLE_NODE_ID, rssi);
+        if (size < 0 || (size_t)size >= sizeof(body)) {
+            ESP_LOGE(TAG, "Could not format BLE presence report");
+        } else {
+            perform_request("/api/voice/presence", "POST", (const uint8_t *)body,
+                            (size_t)size, false, false, NULL);
+        }
+        vTaskDelay(pdMS_TO_TICKS(20000));
+    }
+}
+#endif
+
 static void report_ring(const char *state)
 {
     ring_report_state_t update = strcmp(state, "listening") == 0
@@ -929,6 +972,14 @@ void app_main(void)
     wifi_start();
     setup_server_start();
     clock_start();
+#if CONFIG_SAGE_BLE_PRESENCE
+    if (!valid_ble_node_id(CONFIG_SAGE_BLE_NODE_ID)) {
+        ESP_LOGE(TAG, "Invalid BLE receiver node ID");
+        abort();
+    }
+    check(sage_ble_start_scanner(), "BLE presence scanner");
+    xTaskCreatePinnedToCore(ble_presence_task, "sage-presence", 4096, NULL, 3, NULL, 0);
+#endif
     wake_engine_start();
     xTaskCreatePinnedToCore(audio_task, "sage-audio", 8192, NULL, 8, NULL, 1);
     xTaskCreatePinnedToCore(poll_task, "sage-poll", 6144, NULL, 5, NULL, 0);

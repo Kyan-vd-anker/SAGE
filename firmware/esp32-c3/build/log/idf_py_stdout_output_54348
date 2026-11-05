@@ -1,0 +1,18 @@
+Command: ninja all
+[1/9] Performing build step for 'bootloader'
+[1/1] C:\WINDOWS\system32\cmd.exe /C "cd /D "C:\Github Sage\SAGE\firmware\esp32-c3\build\bootloader\esp-idf\esptool_py" && C:\Users\Kyan\.espressif\python_env\idf5.5_py3.13_env\Scripts\python.exe C:/Espressif/frameworks/esp-idf-v5.5.6/components/partition_table/check_sizes.py --offset 0x8000 bootloader 0x0 "C:/Github Sage/SAGE/firmware/esp32-c3/build/bootloader/bootloader.bin""
+Bootloader binary size 0x5090 bytes. 0x2f70 bytes (37%) free.
+[2/9] No install step for 'bootloader'
+[3/9] Completed 'bootloader'
+[4/9] Building C object esp-idf/sage_ble/CMakeFiles/__idf_sage_ble.dir/sage_ble.c.obj
+[5/9] Linking C static library esp-idf\sage_ble\libsage_ble.a
+[6/9] Generating esp-idf/esp_system/ld/sections.ld
+[7/9] Linking CXX executable sage_presence_c3.elf
+[8/9] Generating binary image from built executable
+esptool.py v4.13.0
+Creating esp32c3 image...
+Merged 2 ELF sections
+Successfully created esp32c3 image.
+Generated C:/Github Sage/SAGE/firmware/esp32-c3/build/sage_presence_c3.bin
+[9/9] C:\WINDOWS\system32\cmd.exe /C "cd /D "C:\Github Sage\SAGE\firmware\esp32-c3\build\esp-idf\esptool_py" && C:\Users\Kyan\.espressif\python_env\idf5.5_py3.13_env\Scripts\python.exe C:/Espressif/frameworks/esp-idf-v5.5.6/components/partition_table/check_sizes.py --offset 0x8000 partition --type app "C:/Github Sage/SAGE/firmware/esp32-c3/build/partition_table/partition-table.bin" "C:/Github Sage/SAGE/firmware/esp32-c3/build/sage_presence_c3.bin""
+sage_presence_c3.bin binary size 0x32050 bytes. Smallest app partition is 0x100000 bytes. 0xcdfb0 bytes (80%) free.

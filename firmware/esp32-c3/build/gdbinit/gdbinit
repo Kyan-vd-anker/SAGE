@@ -1,0 +1,2 @@
+source C:/Github Sage/SAGE/firmware/esp32-c3/build/gdbinit/symbols
+source C:/Github Sage/SAGE/firmware/esp32-c3/build/gdbinit/connect

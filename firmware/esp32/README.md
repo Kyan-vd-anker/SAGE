@@ -19,30 +19,34 @@ does not encrypt audio. Use a trusted private network and do not expose the Sage
 
 The speaker calls Sage over the local network. First configure Sage's voice gateway and the network access it needs.
 
-1. Reserve stable IPv4 addresses for the Sage PC and speaker in your router. Write down both addresses. For example:
+1. Reserve stable IPv4 addresses for the Sage PC, speaker, and engineering-room receiver in your router. Write them down. For example:
    - Sage PC: `192.168.1.20`
-   - ESP32 speaker: `192.168.1.50`
+   - ESP32-S3 speaker: `192.168.1.50`
+   - Engineering-room ESP32-C3 receiver: `192.168.1.51`
 2. In the Sage repository folder, run `notepad .\start-sage.local.bat` to create or edit the ignored local settings file. Keep the existing `SAGE_HOST` value at `127.0.0.1`; only the voice gateway should listen on the LAN:
 
    ```bat
    set "SAGE_HOST=127.0.0.1"
    set "SAGE_VOICE_HOST=0.0.0.0"
    set "SAGE_VOICE_PORT=8002"
-   set "SAGE_ALLOWED_CLIENT_IPS=192.168.1.50"
+   set "SAGE_ALLOWED_CLIENT_IPS=192.168.1.50,192.168.1.51"
    set "SAGE_VOICE_SECRET=paste-a-private-random-secret-here"
+   set "SAGE_BLE_PRESENCE=1"
+   set "SAGE_BLE_NODE_ROOMS=bedroom-speaker:bedroom,engineering-c3:engineering"
+   set "SAGE_BLE_NEAR_RSSI=-65"
    ```
 
-   Replace the example speaker address with its reserved address. Generate a secret in PowerShell with:
+   Replace both example device addresses with their reserved addresses. The carried beacon needs no Wi-Fi address. Generate a secret in PowerShell with:
 
    ```powershell
    python -c "import secrets; print(secrets.token_urlsafe(32))"
    ```
 
    Paste the generated value into `SAGE_VOICE_SECRET`. Use that exact value later in the firmware settings. Do not put secrets in `start-sage.bat`, source control, or messages.
-3. In an Administrator PowerShell, allow only the speaker's IP through the Windows Private firewall profile. Replace the example address:
+3. In an Administrator PowerShell, allow only the speaker and engineering receiver addresses through the Windows Private firewall profile. Replace the example addresses:
 
    ```powershell
-   New-NetFirewallRule -DisplayName "Sage voice from ESP32" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8002 -RemoteAddress 192.168.1.50 -Profile Private
+   New-NetFirewallRule -DisplayName "Sage voice from ESP32" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8002 -RemoteAddress 192.168.1.50,192.168.1.51 -Profile Private
    ```
 
    Do not create a router port-forward for port 8002.
@@ -75,16 +79,20 @@ The speaker calls Sage over the local network. First configure Sage's voice gate
    idf.py menuconfig
    ```
 
-3. In **Sage speaker**, enter:
+3. If Bluetooth is not enabled yet, open **Component config > Bluetooth**, enable Bluetooth with the **Bluedroid** host and controller, and keep **Bluetooth Low Energy** enabled. Then in **Sage speaker**, enter:
    - **Wi-Fi SSID** and **Wi-Fi password** for the 2.4 GHz network.
    - **Sage PC IPv4 address**, for example `192.168.1.20`. This is the initial address; you can change it later on the speaker's setup page without rebuilding.
    - **Sage voice gateway port**: `8002`.
    - **Sage voice HMAC secret**: the exact same value as `SAGE_VOICE_SECRET` in `start-sage.local.bat`.
    - **Speaker setup page password**: use a different random password, up to 64 characters. Generate one with `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
+   - **Enable bedroom BLE presence greetings**: on.
+   - **BLE receiver node ID**: `bedroom-speaker`.
+   - **BLE beacon service UUID**: leave at the shared default `65520` (`0xFFF0`) unless you change it on every node.
 4. Find the **ESP Speech Recognition** options. Enable the **Hi,ESP / `wn9_hiesp`** WakeNet model. In menuconfig, press `/` to search for `wn9_hiesp` if you do not see it in the menus. Enable the matching model option, return to the menu, then save and exit.
 5. The project supplies its own partition table and defaults for the board's 16 MB flash, PSRAM, and CPU. Do not replace `firmware/esp32/partitions.csv`.
 
 The settings are saved in the local `sdkconfig` file. It contains the Wi-Fi password, HMAC secret, and setup page password: do not share it or commit it.
+Build and flash the carried beacon and engineering-room receiver using the [ESP32-C3 presence-node guide](../esp32-c3/README.md).
 
 ## 4. Change the Sage server IP from a browser
 
@@ -131,6 +139,8 @@ see the password. Do not expose the setup page or the Sage voice gateway to the 
    ```powershell
    curl.exe http://127.0.0.1:8002/api/voice/status
    ```
+
+4. Check receiver health at `http://127.0.0.1:8002/api/voice/presence`. The greeting is issued only when both configured room receivers are online, the beacon has remained unseen for at least 10 minutes, and its bedroom RSSI reaches the configured threshold. It is queued once on the transition to near. RSSI is an approximate signal-strength threshold, not a precise distance measurement.
 
 ## Troubleshooting
 

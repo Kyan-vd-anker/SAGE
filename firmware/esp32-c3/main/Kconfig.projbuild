@@ -1,0 +1,53 @@
+menu "Sage BLE presence node"
+
+choice SAGE_BLE_ROLE
+    prompt "BLE node role"
+    default SAGE_BLE_RECEIVER
+
+config SAGE_BLE_BEACON
+    bool "Carried beacon"
+
+config SAGE_BLE_RECEIVER
+    bool "Stationary room receiver"
+
+endchoice
+
+config SAGE_BLE_SERVICE_UUID
+    int "BLE beacon service UUID"
+    range 61440 65535
+    default 65520
+    help
+        Keep this value identical on the carried beacon, speaker, and room receivers.
+
+config SAGE_BLE_NODE_ID
+    string "Receiver node ID"
+    default "engineering-c3"
+    depends on SAGE_BLE_RECEIVER
+
+config SAGE_PRESENCE_WIFI_SSID
+    string "Wi-Fi SSID"
+    default ""
+    depends on SAGE_BLE_RECEIVER
+
+config SAGE_PRESENCE_WIFI_PASSWORD
+    string "Wi-Fi password"
+    default ""
+    depends on SAGE_BLE_RECEIVER
+
+config SAGE_PRESENCE_SERVER_IP
+    string "Sage PC IPv4 address"
+    default "192.168.1.20"
+    depends on SAGE_BLE_RECEIVER
+
+config SAGE_PRESENCE_SERVER_PORT
+    int "Sage voice gateway port"
+    range 1 65535
+    default 8002
+    depends on SAGE_BLE_RECEIVER
+
+config SAGE_PRESENCE_SECRET
+    string "Sage voice HMAC secret"
+    default ""
+    depends on SAGE_BLE_RECEIVER
+
+endmenu

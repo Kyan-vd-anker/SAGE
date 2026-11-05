@@ -29,6 +29,12 @@ def connection():
     finally:
         conn.close()
 
+@contextmanager
+def transaction():
+    """Run a group of database operations under the shared write lock."""
+    with _lock, connection() as conn:
+        yield conn
+
 def _add_columns(conn, table, columns):
     """Add missing columns to an existing table (a tiny forward-only migration)."""
     existing = {row[1] for row in conn.execute(f'PRAGMA table_info({table})')}

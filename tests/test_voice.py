@@ -126,6 +126,43 @@ class TrustTests(unittest.TestCase):
 
 
 class VoiceGatewayStateTests(unittest.TestCase):
+    def test_ack_announcement_preempts_queue_and_plays_during_sleep(self):
+        from unittest.mock import patch
+        from sage import voice
+
+        with patch('sage.voice._ann', []), \
+             patch('sage.voice._asleep', True), \
+             patch('sage.voice.vu.speech_text', side_effect=lambda text, **kwargs: text):
+            voice.announce('A reminder.', kind='reminder', lang='en')
+            voice.announce('I am on it, sir.', kind='ack', lang='en')
+
+            self.assertEqual(voice.next_announcement(0)['text'], 'I am on it, sir.')
+
+    def test_speaker_acknowledges_after_recognition_before_answering(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from sage import voice
+
+        handler = SimpleNamespace(
+            _send=lambda status: status,
+            _stream_speech=lambda text, lang, headers, ring: 'spoken',
+        )
+        with patch('sage.voice.vu.parse_audio', return_value=b'pcm'), \
+             patch('sage.voice.vu.seconds', return_value=1), \
+             patch('sage.voice.vu.rms', return_value=100), \
+             patch('sage.voice.transcribe', return_value=('Turn on the lights', 'en')), \
+             patch('sage.voice.vu.looks_like_noise', return_value=False), \
+             patch('sage.voice.announce') as announce, \
+             patch('sage.voice.converse', side_effect=lambda *args: (
+                 announce.assert_called_once_with('I am on it, sir.', kind='ack', lang='en', ttl=30),
+                 ('The lights are on.', 'en', 'ok', False),
+             )[1]) as converse, \
+             patch('sage.voice._bump'), \
+             patch('sage.voice.audit'):
+            self.assertEqual(voice.Handler._ask(handler, b'audio', 'speaker-ip'), 'spoken')
+
+        announce.assert_called_once_with('I am on it, sir.', kind='ack', lang='en', ttl=30)
+
     def test_gateway_exposes_wall_display_ring_state(self):
         from types import SimpleNamespace
         from unittest.mock import patch

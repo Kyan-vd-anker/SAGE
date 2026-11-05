@@ -24,6 +24,7 @@ Everything is plain HTTP on its own port (SAGE_VOICE_PORT, default 8002). Audio 
     POST /api/voice/ring       {"state": "listening"|"idle"|"muted"|"error"}  what the device is doing right now
                                (shown as the light ring on the wall display).
     POST /api/voice/say        {"text": "...", "lang": "nl"}  make the speaker say something.
+    POST /api/voice/presence   {"node": "...", "rssi": -60|null}  authenticated BLE receiver heartbeat/sighting.
     GET  /api/voice/status     engines, sleep mode, device online.
     GET  /phone                the Talk page for the iPhone (needs HTTPS: Tailscale Serve).
     POST /api/voice/phone/ask|text|button   the phone as a second speaker. Needs SAGE_PHONE_TOKEN (Bearer) on every
@@ -353,7 +354,7 @@ _WORDS = {
     'alarm': {'en': 'Alarm: {t}.', 'nl': 'Wekker: {t}.'},
     'wake': {'en': 'Good morning. Time to wake up.', 'nl': 'Goedemorgen. Tijd om op te staan.'},
 }
-URGENT = ('alarm', 'timer')          # still spoken in sleep mode; everything else is held until you wake the speaker
+URGENT = ('alarm', 'timer', 'presence', 'ack')  # acknowledgements and safety-critical alerts play during sleep
 
 
 def announce(text, kind='say', lang=None, listen=False, ttl=900, max_chars=None):
@@ -366,8 +367,12 @@ def announce(text, kind='say', lang=None, listen=False, ttl=900, max_chars=None)
         return 0
     with _ann_cond:
         _ann_seq += 1
-        _ann.append({'id': _ann_seq, 'kind': kind, 'text': spoken, 'lang': lang, 'listen': bool(listen),
-                     'expires': time.time() + max(ttl, 10 * 3600 if _asleep and kind not in URGENT else 0)})
+        item = {'id': _ann_seq, 'kind': kind, 'text': spoken, 'lang': lang, 'listen': bool(listen),
+                'expires': time.time() + max(ttl, 10 * 3600 if _asleep and kind not in URGENT else 0)}
+        if kind == 'ack':
+            _ann.insert(0, item)
+        else:
+            _ann.append(item)
         _ann_cond.notify_all()
         return _ann_seq
 
@@ -881,6 +886,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         query = parse_qs(url.query)
         try:
+            if url.path == '/api/voice/presence':
+                if not config.BLE_PRESENCE_ENABLED:
+                    return self._json({'error': 'BLE presence is disabled'}, 503)
+                from . import presence
+                return self._json(presence.status())
             if url.path == '/api/voice/poll':
                 return self._poll(query)
             if url.path == '/api/voice/state':
@@ -930,7 +940,23 @@ class Handler(BaseHTTPRequestHandler):
                 lang = data.get('lang') if data.get('lang') in ('nl', 'en') else None
                 audit('say', 'queued', ip, reply=text)
                 return self._json({'queued': announce(text, 'say', lang, listen=bool(data.get('listen')))})
+            if path == '/api/voice/presence':
+                if not config.BLE_PRESENCE_ENABLED:
+                    return self._json({'error': 'BLE presence is disabled'}, 503)
+                from . import presence
+                data = json.loads(body or b'{}')
+                if not isinstance(data, dict):
+                    return self._json({'error': 'JSON object is required'}, 400)
+                if 'node' not in data or 'rssi' not in data:
+                    return self._json({'error': 'node and rssi are required'}, 400)
+                result = presence.report(data.get('node'), data.get('rssi'))
+                if result['greet']:
+                    announce('Hello sir.', 'presence', lang='en', ttl=60)
+                    audit('presence', 'greeted', ip, reply='Hello sir.', detail=result['room'])
+                return self._json(result)
             return self._json({'error': 'Not found'}, 404)
+        except ValueError as exc:
+            return self._json({'error': str(exc)}, 400)
         except Exception as exc:
             _log('post', exc)
             return self._json({'error': str(exc)}, 500)
@@ -978,6 +1004,8 @@ class Handler(BaseHTTPRequestHandler):
                 audit('ask', 'noise', ip, heard=text)
                 return self._send(204)
             heard_ms = int((time.time() - started) * 1000)
+            if origin == 'speaker':
+                announce('I am on it, sir.', kind='ack', lang='en', ttl=30)
             spoken, reply_lang, outcome, listen = converse(text, lang, ip, origin)
             limit = 100 if origin == 'speaker' else 600
             headers = {'X-Sage-Heard': quote(text[:limit]), 'X-Sage-Reply': quote(spoken[:limit]), 'X-Sage-Lang': reply_lang,
