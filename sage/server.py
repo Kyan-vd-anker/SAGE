@@ -102,8 +102,8 @@ class Handler(BaseHTTPRequestHandler):
         if method=='POST' and path in ('/api/ha/command','/api/shortcuts/awake'): return False  # they have their own bearer tokens
         try: address=ipaddress.ip_address(self.client_address[0])
         except ValueError: return True
-        # Devices on SAGE_ALLOWED_CLIENT_IPS (wall display) skip the login. Loopback does not: Tailscale Serve arrives via loopback.
-        if not address.is_loopback and str(address) in config.ALLOWED_CLIENT_IPS: return False
+        # Only devices on SAGE_LOGIN_EXEMPT_IPS (e.g. the wall display) skip the login. Loopback never does: Tailscale Serve arrives via loopback.
+        if not address.is_loopback and str(address) in config.LOGIN_EXEMPT_IPS: return False
         return not self.session_valid()
     def login_denied(self, path):
         if path=='/':

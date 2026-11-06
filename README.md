@@ -14,7 +14,7 @@ The first run creates `data/sage.db`, `data/vault/`, and `data/workspace/`. Set 
 
 ### Dashboard password
 
-Set `SAGE_PASSWORD` (put it in the git-ignored `start-sage.local.bat`, or the systemd override on Kali) and the dashboard shows a login page; the session cookie lasts 30 days and five wrong tries lock that IP for 5 minutes. Without it there is no login. Devices listed in `SAGE_ALLOWED_CLIENT_IPS` (for example the wall display) skip the login, and the Home Assistant and iPhone Shortcut endpoints keep using their own bearer tokens. Loopback requests (including Tailscale Serve) always need the login. Use HTTPS (Tailscale Serve) when reaching Sage from other devices.
+Set `SAGE_PASSWORD` (put it in the git-ignored `start-sage.local.bat`, or the systemd override on Kali) and the dashboard shows a login page; the session cookie lasts 30 days and five wrong tries lock that IP for 5 minutes. Without it there is no login. Devices listed in `SAGE_LOGIN_EXEMPT_IPS` (empty by default; add the wall display's IP here) skip the login, and the Home Assistant and iPhone Shortcut endpoints keep using their own bearer tokens. Loopback requests (including Tailscale Serve) always need the login. Use HTTPS (Tailscale Serve) when reaching Sage from other devices.
 
 ### Install or update on Windows
 
