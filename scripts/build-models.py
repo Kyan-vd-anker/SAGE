@@ -22,14 +22,17 @@ sys.path.insert(0, str(ROOT))
 
 from sage import agent, config  # noqa: E402
 
-# name, base model, Modelfile parameters
+# Using namespace names for Ollama registry to prevent remote cache lookups
 MODELS = [
     ('local/sage-fast', 'qwen2.5:3b', {'num_ctx': 8192, 'temperature': 0.6, 'top_p': 0.9, 'repeat_penalty': 1.05}),
     ('local/sage-coder', 'qwen2.5-coder:7b', {'num_ctx': 8192, 'temperature': 0.2, 'top_p': 0.9}),
     ('local/sage-reason', 'deepseek-r1:7b', {'num_ctx': 8192, 'temperature': 0.6, 'top_p': 0.95}),
 ]
-
-ENV_NAMES = {'sage-fast': 'SAGE_FAST_MODEL', 'sage-coder': 'SAGE_DEEP_MODEL', 'sage-reason': 'SAGE_REASONING_MODEL'}
+ENV_NAMES = {
+    'local/sage-fast': 'SAGE_FAST_MODEL', 
+    'local/sage-coder': 'SAGE_DEEP_MODEL', 
+    'local/sage-reason': 'SAGE_REASONING_MODEL'
+}
 
 
 def modelfile_text(base, parameters):
@@ -37,7 +40,6 @@ def modelfile_text(base, parameters):
     if '"""' in prompt:
         raise SystemExit('The system prompt contains triple quotes, which a Modelfile cannot hold.')
     lines = [f'FROM {base}']
-    # Ensure parameter numerical values don't get broken during parsing
     for key, value in parameters.items():
         lines.append(f'PARAMETER {key} {value}')
     lines.append(f'SYSTEM """{prompt}"""')
@@ -49,7 +51,9 @@ def write_modelfiles():
     folder.mkdir(exist_ok=True)
     paths = {}
     for name, base, parameters in MODELS:
-        path = folder / f'{name}.Modelfile'
+        # Strip out 'local/' slash prefix so files write flat into ./modelfiles/ safely
+        safe_filename = name.replace('/', '-')
+        path = folder / f'{safe_filename}.Modelfile'
         path.write_text(modelfile_text(base, parameters), encoding='utf-8')
         paths[name] = path
     return paths
@@ -62,7 +66,7 @@ def ollama(*args):
     except FileNotFoundError:
         raise SystemExit('The ollama command was not found. Install Ollama and make sure it is on PATH.')
     except subprocess.CalledProcessError as exc:
-        raise SystemExit(f'ollama {args} failed (exit code {exc.returncode}).')
+        raise SystemExit(f'ollama {args[0]} failed (exit code {exc.returncode}).')
 
 
 def unload_all_models():
@@ -84,8 +88,9 @@ def unload_all_models():
 
 
 def ask(name):
+    # Updated user question to help verify prompt attachment on sensitive architectures like DeepSeek-R1
     body = {'model': name, 'stream': False, 'keep_alive': '30m', 'options': {'num_predict': 200},
-            'messages': [{'role': 'user', 'content': 'Confirm system identity. Repeat your name back exactly if configured.'}]}
+            'messages': [{'role': 'user', 'content': 'Who are you? Answer in one short sentence containing the word sage.'}]}
     request = urllib.request.Request(config.OLLAMA_URL.rstrip('/') + '/api/chat', data=json.dumps(body).encode(),
                                      headers={'Content-Type': 'application/json'}, method='POST')
     
@@ -93,7 +98,6 @@ def ask(name):
         with urllib.request.urlopen(request, timeout=300) as response:
             return json.loads(response.read())
     except urllib.error.HTTPError as exc:
-        # Catch and print the exact JSON body from Ollama containing the actual internal error trace
         try:
             error_body = exc.read().decode('utf-8')
             error_json = json.loads(error_body)
