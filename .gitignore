@@ -35,3 +35,8 @@ firmware/esp32/managed_components/
 firmware/esp32/sdkconfig
 firmware/esp32/sdkconfig.old
 firmware/esp32/dependencies.lock
+firmware/esp32-c3/build/
+firmware/esp32-c3/managed_components/
+firmware/esp32-c3/sdkconfig
+firmware/esp32-c3/sdkconfig.old
+firmware/esp32-c3/dependencies.lock

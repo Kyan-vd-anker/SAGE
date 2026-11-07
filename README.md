@@ -16,6 +16,10 @@ The first run creates `data/sage.db`, `data/vault/`, and `data/workspace/`. Set 
 
 Set `SAGE_PASSWORD` (put it in the git-ignored `start-sage.local.bat`, or the systemd override on Kali) and the dashboard shows a login page; the session cookie lasts 30 days and five wrong tries lock that IP for 5 minutes. Without it there is no login. Devices listed in `SAGE_LOGIN_EXEMPT_IPS` (empty by default; add the wall display's IP here) skip the login, and the Home Assistant and iPhone Shortcut endpoints keep using their own bearer tokens. Loopback requests (including Tailscale Serve) always need the login. Use HTTPS (Tailscale Serve) when reaching Sage from other devices.
 
+### Model lanes
+
+Sage uses two Ollama models. The **fast lane** (`qwen2.5:3b`, `SAGE_FAST_MODEL`) answers greetings, simple questions, clarifications and confirmations. The **deep lane** (`qwen2.5-coder:7b`, `SAGE_DEEP_MODEL`) takes code, tool calls, messages over `SAGE_ROUTER_LONG_INPUT_CHARS` (1500) characters, math and trade-off reasoning (`SAGE_REASONING_MODEL`, same as deep by default) and background planning or research. Pull both with `ollama pull qwen2.5:3b` and `ollama pull qwen2.5-coder:7b`. The old `SAGE_MODEL` and `SAGE_CODING_MODEL` names still work and override the defaults.
+
 ### Install or update on Windows
 
 Double-click [`install-sage-windows.bat`](install-sage-windows.bat); enter the folder containing your existing SAGE installation, or press Enter to use the current folder. Missing Git, Python, Ollama, and the default Ollama models are installed/downloaded when possible through `winget`. Close the SAGE window before updating. It preserves `data/`, `start-sage.local.bat`, user-added plugin files, and credentials/databases. Updates to a Git checkout require a clean working tree. To update source only, run `.\scripts\install-update-windows.ps1 -InstallPath "C:\path\to\SAGE" -SkipDependencies` from PowerShell. See [UPDATE.md](UPDATE.md) for details.

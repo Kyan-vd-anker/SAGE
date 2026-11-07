@@ -13917,10 +13917,7 @@
                                 "help": "Set the maximum retry count when periodic advertising create sync fails\nwith error code 0x3E (Connection Failed to be Established).\nSet to 0 to disable retry. Default is 3.",
                                 "id": "BT_BLE_FEAT_CREATE_SYNC_RETRY_MAX",
                                 "name": "BT_BLE_FEAT_CREATE_SYNC_RETRY_MAX",
-                                "range": [
-                                    0,
-                                    16
-                                ],
+                                "range": null,
                                 "title": "Maximum retry count for periodic advertising create sync",
                                 "type": "int"
                             },
