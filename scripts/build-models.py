@@ -61,6 +61,25 @@ def ollama(*args):
         raise SystemExit(f'ollama {args[0]} failed (exit code {exc.returncode}).')
 
 
+def unload_all_models():
+    """Explicitly tells Ollama to free up VRAM by unloading all active models."""
+    print("Unloading loaded models from VRAM...")
+    for name, _, _ in MODELS:
+        try:
+            body = {'model': name, 'keep_alive': 0}
+            request = urllib.request.Request(
+                config.OLLAMA_URL.rstrip('/') + '/api/chat',
+                data=json.dumps(body).encode(),
+                headers={'Content-Type': 'application/json'},
+                method='POST'
+            )
+            with urllib.request.urlopen(request, timeout=10) as response:
+                response.read()
+        except Exception:
+            # Silence exceptions if a model wasn't loaded in the first place
+            pass
+
+
 def ask(name):
     body = {'model': name, 'stream': False, 'keep_alive': '30m', 'options': {'num_predict': 200},
             'messages': [{'role': 'user', 'content': 'Who are you? Answer in one short sentence.'}]}
@@ -73,6 +92,8 @@ def ask(name):
 def check():
     ok = True
     for name, _base, _parameters in MODELS:
+        # Unload any previously tested model to free VRAM for the next model evaluation
+        unload_all_models()
         try:
             ask(name)                 # first call loads the model
             result = ask(name)        # second call shows the warm timings
@@ -104,7 +125,12 @@ def main():
     for name, base, _parameters in MODELS:
         ollama('pull', base)
         ollama('create', name, '-f', str(paths[name]))
+    
     time.sleep(5)  # give Ollama a moment to finish creating the models
+    
+    # Clean VRAM completely before launching tests
+    unload_all_models()
+    
     print('\nTesting the new models...')
     good = check()
     print('\nTo use them, set these (Kali: the same env file or drop-in as SAGE_PASSWORD; Windows: start-sage.local.bat):')
