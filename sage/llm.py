@@ -71,9 +71,36 @@ def _release():
         _chat_busy=False
         _priority.notify_all()
 
+BAKED_PREFIX = 'sage-'  # models made by scripts/build-models.py keep Sage's system prompt in their Modelfile
+
+def _static_prompt():
+    from . import agent
+    return agent.SYSTEM
+
+def _baked(model, messages):
+    """Models made by scripts/build-models.py already hold Sage's fixed system prompt. Ollama adds that prompt only when
+    the first message is not a system message, so the changing system text (date, memories) moves behind the first
+    message, where Ollama folds it into the same system block. Other models and other prompts are sent unchanged."""
+    if not str(model).startswith(BAKED_PREFIX) or not messages: return messages
+    static = _static_prompt()
+    if not any(m.get('role') == 'system' and str(m.get('content') or '').startswith(static) for m in messages):
+        # A call with its own prompt: keep the stored prompt out (an empty system message blocks it).
+        return messages if messages[0].get('role') == 'system' else [{'role': 'system', 'content': ''}] + list(messages)
+    extra, rest = [], []
+    for item in messages:
+        if item.get('role') == 'system':
+            text = str(item.get('content') or '')
+            if text.startswith(static): text = text[len(static):]
+            if text.strip(): extra.append(text.strip())
+        else:
+            rest.append(item)
+    if not rest: return messages
+    if extra: rest.insert(max(1, len(rest) - 1), {'role': 'system', 'content': '\n\n'.join(extra)})  # never first, or Ollama skips the stored prompt
+    return rest
+
 def model_for_request(text, use_tools=False):
     """Pick the lane. The fast lane (MODEL) answers greetings, simple questions, clarifications and confirmations.
-    The deep lane (CODING_MODEL) takes code, tool calls, long input and heavy reasoning (REASONING_MODEL, same by default)."""
+    The deep lane (CODING_MODEL) takes code, tool calls and long input. Math, physics and trade-off talk goes to REASONING_MODEL."""
     text = str(text or '')
     direct_coding_terms = r'\b(?:code|coding|programming|source code|debugging|debug|refactor(?:ing)?|software development|codebase|pull request|unit test)\b'
     code_artifacts = r'\b(?:script|program|function|class|method|plugin|website|web app|app|application|api endpoint|snippet)\b'
@@ -110,7 +137,7 @@ def _background_request(messages, max_tokens, timeout, model):
         _active_background_conn=conn
     deadline=time.monotonic()+timeout
     try:
-        data={"model": model, "messages": messages, "stream": True, "keep_alive": "30m"}
+        data={"model": model, "messages": _baked(model, messages), "stream": True, "keep_alive": "30m"}
         if max_tokens is not None: data['options']={"num_predict": max_tokens}
         conn.request('POST',url.path,body=json.dumps(data).encode(),headers={"Content-Type":"application/json"})
         if _background_interrupted.is_set(): raise BackgroundInterrupted('Background work yielded to chat.')
@@ -187,7 +214,7 @@ def chat_stream(messages, tools=None, max_tokens=None, on_token=None, cancel=Non
         if cancel is not None:
             cancel.conn = conn
             if cancel.cancelled: raise StreamCancelled('')
-        data = {"model": model, "messages": messages, "stream": True, "keep_alive": "30m"}
+        data = {"model": model, "messages": _baked(model, messages), "stream": True, "keep_alive": "30m"}
         if tools: data['tools'] = tools
         if max_tokens is not None: data['options'] = {"num_predict": max_tokens}
         conn.request('POST', url.path, body=json.dumps(data).encode(), headers={"Content-Type": "application/json"})
@@ -234,7 +261,7 @@ def chat_message(messages, tools=None, timeout=600, max_tokens=None, background=
     try:
         if background and not tools:
             return _background_request(messages, max_tokens, timeout, model)
-        data = {"model": model, "messages": messages, "stream": False, "keep_alive": "30m"}
+        data = {"model": model, "messages": _baked(model, messages), "stream": False, "keep_alive": "30m"}
         if tools: data['tools'] = tools
         if max_tokens is not None: data['options'] = {"num_predict": max_tokens}
         payload = json.dumps(data).encode()
@@ -270,7 +297,7 @@ def chat_message(messages, tools=None, timeout=600, max_tokens=None, background=
                     instruction+='\nThe user explicitly asked for one of these tools. You MUST choose one of them and fill its arguments from the user message (use defaults when unspecified). Never answer from your own knowledge and never invent a result.'
                 fallback_messages=[{'role':'system','content':instruction}]+messages
                 output_schema={'type':'object','properties':{'tool':{'type':'string','enum':([] if require_tool else ['none'])+names},'arguments':{'type':'object'},'response':{'type':'string'}},'required':['tool','arguments','response'],'additionalProperties':False}
-                fallback={'model':model,'messages':fallback_messages,'stream':False,'keep_alive':'30m','format':output_schema,'options':{'num_predict':min(max_tokens or 256,512)}}
+                fallback={'model':model,'messages':_baked(model,fallback_messages),'stream':False,'keep_alive':'30m','format':output_schema,'options':{'num_predict':min(max_tokens or 256,512)}}
                 retry=urllib.request.Request(OLLAMA_URL.rstrip('/')+'/api/chat',data=json.dumps(fallback).encode(),headers={'Content-Type':'application/json'},method='POST')
                 try:
                     with urllib.request.urlopen(retry,timeout=timeout) as response: reply=json.loads(response.read()).get('message',{})
@@ -300,7 +327,7 @@ def status():
         names={str(item.get('name','')) for item in models}
         def installed(name): return name in names or name.endswith(':latest') and name[:-7] in names
         return {"online": True, "model": MODEL, "installed": installed(MODEL),
-                "coding_model": installed(CODING_MODEL), "vision_model": installed(VISION_MODEL),
+                "coding_model": installed(CODING_MODEL), "reasoning_model": installed(REASONING_MODEL), "vision_model": installed(VISION_MODEL),
                 "embedding_model": installed(EMBED_MODEL), "models": sorted(names)}
     except Exception as exc:
         return {"online": False, "model": MODEL, "error": str(exc)}

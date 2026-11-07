@@ -28,6 +28,7 @@ __pycache__/
 .venv/
 venv/
 start-sage.local.bat
+/modelfiles/
 
 # ESP-IDF generated and device-specific firmware files.
 firmware/esp32/build/

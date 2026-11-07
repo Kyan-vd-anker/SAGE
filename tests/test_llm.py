@@ -60,3 +60,34 @@ class LlmTests(unittest.TestCase):
             self.assertEqual(json.loads(urlopen.call_args.args[0].data)['model'],llm.MODEL)
             llm.chat_message([{'role': 'user', 'content': 'plan'}],tools=[{'type':'function','function':{'name':'x','parameters':{}}}],background=True)
             self.assertEqual(json.loads(urlopen.call_args.args[0].data)['model'],llm.CODING_MODEL)
+
+    def test_baked_models_get_the_changing_system_text_behind_the_conversation(self):
+        history = [{'role': 'user', 'content': 'hi'}, {'role': 'assistant', 'content': 'hello'}, {'role': 'user', 'content': 'what is on today?'}]
+        messages = [{'role': 'system', 'content': 'STATIC rules. Today is Saturday.'}] + history
+        with patch('sage.llm._static_prompt', return_value='STATIC rules.'):
+            sent = llm._baked('sage-fast', messages)
+            self.assertNotEqual(sent[0]['role'], 'system')
+            self.assertEqual([m for m in sent if m['role'] != 'system'], history)
+            extra = [m for m in sent if m['role'] == 'system']
+            self.assertEqual(extra, [{'role': 'system', 'content': 'Today is Saturday.'}])
+            self.assertEqual(sent[-1], history[-1])
+            self.assertEqual(llm._baked('qwen2.5:3b', messages), messages)  # plain models are untouched
+            only_static = [{'role': 'system', 'content': 'STATIC rules.'}] + history
+            self.assertEqual(llm._baked('sage-coder', only_static), history)
+
+    def test_baked_models_keep_other_prompts_free_of_the_stored_prompt(self):
+        with patch('sage.llm._static_prompt', return_value='STATIC rules.'):
+            own = [{'role': 'system', 'content': 'Summarise.'}, {'role': 'user', 'content': 'text'}]
+            self.assertEqual(llm._baked('sage-fast', own), own)
+            bare = [{'role': 'user', 'content': 'text'}]
+            self.assertEqual(llm._baked('sage-fast', bare), [{'role': 'system', 'content': ''}] + bare)
+
+    def test_baked_prompt_is_applied_to_the_request_sent_to_ollama(self):
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps({'message': {'content': 'ok'}}).encode()
+        messages = [{'role': 'system', 'content': 'STATIC rules. Extra.'}, {'role': 'user', 'content': 'hi'}]
+        with patch('sage.llm._static_prompt', return_value='STATIC rules.'), patch('sage.llm.urllib.request.urlopen', return_value=response) as urlopen:
+            llm.chat_message(messages, model='sage-fast')
+        sent = json.loads(urlopen.call_args.args[0].data)['messages']
+        self.assertEqual(sent, [{'role': 'user', 'content': 'hi'}, {'role': 'system', 'content': 'Extra.'}])
+        self.assertNotIn('STATIC rules.', json.dumps(sent))

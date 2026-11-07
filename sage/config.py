@@ -10,13 +10,13 @@ WORKSPACE = Path(os.getenv("SAGE_WORKSPACE", DATA / "workspace"))
 PLUGIN_DIR = Path(os.getenv("SAGE_PLUGINS", ROOT / "plugins"))
 STATIC_DIR = Path(__file__).parent / "static"
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
-# Two model lanes (see llm.model_for_request). The fast lane answers most chat; the deep lane takes code,
-# tool calls, long input and heavy reasoning. The old SAGE_MODEL and SAGE_CODING_MODEL names still work.
+# Three model lanes (see llm.model_for_request): fast = everyday replies, deep = code, tool calls and long input,
+# reasoning = math, physics and trade-off discussions. The old SAGE_MODEL and SAGE_CODING_MODEL names still work.
 FAST_MODEL = os.getenv("SAGE_FAST_MODEL", os.getenv("SAGE_MODEL", "qwen2.5:3b"))
 DEEP_MODEL = os.getenv("SAGE_DEEP_MODEL", os.getenv("SAGE_CODING_MODEL", "qwen2.5-coder:7b"))
 MODEL = FAST_MODEL
 CODING_MODEL = DEEP_MODEL
-REASONING_MODEL = os.getenv("SAGE_REASONING_MODEL", DEEP_MODEL)  # math, physics and trade-off discussions
+REASONING_MODEL = os.getenv("SAGE_REASONING_MODEL", "deepseek-r1:7b")  # math, physics and trade-off discussions
 ROUTER_LONG_INPUT_CHARS = int(os.getenv("SAGE_ROUTER_LONG_INPUT_CHARS", "1500"))  # longer messages go to the deep lane
 VISION_MODEL = os.getenv("SAGE_VISION_MODEL", "llava:7b")
 EMBED_MODEL = os.getenv("SAGE_EMBED_MODEL", "nomic-embed-text")
