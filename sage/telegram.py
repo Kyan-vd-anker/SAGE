@@ -148,21 +148,28 @@ def _begin_approval(chat_id, approval_id):
     return agent.resolve_tool_approval(int(approval_id), True)
 
 
-def notify_approval(approval_id, tool_name):
+def can_notify_approvals():
+    """True when an approval request would actually reach the paired Telegram chat right now."""
+    return bool(_setting('telegram_chat_id') and config.TELEGRAM_BOT_TOKEN and _enabled('approvals'))
+
+
+def notify_approval(approval_id, tool_name, reason=''):
     chat_id = _setting('telegram_chat_id')
-    if not chat_id or not config.TELEGRAM_BOT_TOKEN or not _enabled('approvals'): return
+    if not chat_id or not config.TELEGRAM_BOT_TOKEN or not _enabled('approvals'): return False
     try:
         name, args = _approval_details(approval_id)
         detail = json.dumps(args, ensure_ascii=False, indent=2)[:1800]
     except Exception:
         name, detail = tool_name, '(details unavailable; inspect /approvals)'
-    text = f'Sage is waiting for approval · #{approval_id}\nAction: {name}\n{detail}\n\nHigher-risk requests require a confirmation phrase after you tap Approve.'
+    why = f'Why: {reason}\n' if reason else ''
+    text = f'Sage is waiting for approval · #{approval_id}\nAction: {name}\n{why}{detail}\n\nHigher-risk requests require a confirmation phrase after you tap Approve.'
     markup = {'inline_keyboard': [[{'text': 'Approve', 'callback_data': f'ap:{approval_id}'}, {'text': 'Decline', 'callback_data': f'de:{approval_id}'}]]}
     def deliver():
         global _last_error
         try: _send(chat_id, text, markup)
         except TelegramError as exc: _last_error = str(exc)
     threading.Thread(target=deliver, name='sage-telegram-approval', daemon=True).start()
+    return True
 
 
 def _download(file_id, limit=8 * 1024 * 1024):

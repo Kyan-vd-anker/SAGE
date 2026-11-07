@@ -1,0 +1,25 @@
+{
+  "name": "plot_maker",
+  "description": "Draw a line, scatter or bar chart as a PNG in the workspace plots folder. Give numbers directly (x and series) or point at a CSV file in the workspace.",
+  "version": "1.0.0",
+  "permission": "confirm",
+  "entrypoint": "plot_maker.py:run",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "title": {"type": "string"},
+      "xlabel": {"type": "string"},
+      "ylabel": {"type": "string"},
+      "kind": {"type": "string", "enum": ["line", "scatter", "bar"]},
+      "x": {"type": "array", "description": "X values (numbers; bar charts may use text labels)"},
+      "series": {"type": "object", "description": "Map of series name to list of Y numbers, same length as x"},
+      "csv_path": {"type": "string", "description": "CSV file inside the workspace, with a header row"},
+      "x_column": {"type": "string", "description": "CSV column for x (default: first column)"},
+      "y_columns": {"type": "array", "description": "CSV columns to plot (default: all others)"},
+      "filename": {"type": "string", "description": "Output name without folder; saved under plots/"},
+      "logx": {"type": "boolean"},
+      "logy": {"type": "boolean"}
+    },
+    "additionalProperties": false
+  }
+}

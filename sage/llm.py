@@ -8,7 +8,7 @@ import time
 import urllib.request
 import urllib.error
 from urllib.parse import urlparse
-from .config import OLLAMA_URL, MODEL, CODING_MODEL, VISION_MODEL, EMBED_MODEL
+from .config import OLLAMA_URL, MODEL, CODING_MODEL, REASONING_MODEL, ROUTER_LONG_INPUT_CHARS, VISION_MODEL, EMBED_MODEL
 
 class OllamaError(RuntimeError): pass
 _priority = threading.Condition()
@@ -72,7 +72,9 @@ def _release():
         _priority.notify_all()
 
 def model_for_request(text, use_tools=False):
-    """Route coding and tool selection to the coder, keeping reasoning with the default model."""
+    """Pick the lane. The fast lane (MODEL) answers greetings, simple questions, clarifications and confirmations.
+    The deep lane (CODING_MODEL) takes code, tool calls, long input and heavy reasoning (REASONING_MODEL, same by default)."""
+    text = str(text or '')
     direct_coding_terms = r'\b(?:code|coding|programming|source code|debugging|debug|refactor(?:ing)?|software development|codebase|pull request|unit test)\b'
     code_artifacts = r'\b(?:script|program|function|class|method|plugin|website|web app|app|application|api endpoint|snippet)\b'
     coding_actions = r'\b(?:write|create|build|generate|implement|fix|edit|change|review|explain|optimi[sz]e|test)\b'
@@ -86,8 +88,8 @@ def model_for_request(text, use_tools=False):
         return CODING_MODEL
     reasoning_terms = r'\b(?:equations?|math(?:ematics)?|algebra|calculus|formulas?|calculate|compute|derive|solve for|physics problem|brainstorm(?:ing)?|spar(?:ring)?|talk(?:ing)? through|think(?:ing)? through|reason(?:ing)? through|help me (?:think|reason)|challenge my (?:thinking|assumptions)|trade-?offs|pros and cons|discuss(?:ing)? (?:the |this )?(?:problem|issue)|talk about (?:the |this )?problem|work(?:ing)? through (?:the |this )?problem)\b'
     if re.search(reasoning_terms, text, re.IGNORECASE):
-        return MODEL
-    if use_tools:
+        return REASONING_MODEL
+    if use_tools or len(text) > ROUTER_LONG_INPUT_CHARS:
         return CODING_MODEL
     return MODEL
 
@@ -225,7 +227,7 @@ def chat_stream(messages, tools=None, max_tokens=None, on_token=None, cancel=Non
 
 def chat_message(messages, tools=None, timeout=600, max_tokens=None, background=False, require_tool=False, force_schema=False, model=None):
     global _active_background_response
-    model = model or MODEL
+    model = model or (CODING_MODEL if background else MODEL)  # unrouted background work (planning, research) uses the deep lane
     # User chat has priority over queued background model calls. In-flight
     # background requests are closed by interrupt_background() on new input.
     _acquire(background)

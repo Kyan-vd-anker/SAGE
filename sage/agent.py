@@ -139,8 +139,8 @@ def _relevant_context(user_text,limit=3):
     _store_context_setting('chat_context_last',{'query':user_text[:500],'items':context_items})
     return [{'role':item['role'],'content':item['content']} for item in chat],[row for _,_,kind,row,_ in selected if kind=='memory']
 
-def _queue_approval(name,arguments,messages,computer_task_id=None):
-    if name in {p.get('name') for p in plugins.discover()} and not trust.is_voice():
+def _queue_approval(name,arguments,messages,computer_task_id=None,force=False,reason=''):
+    if not force and name in {p.get('name') for p in plugins.discover()} and not trust.is_voice():
         result=plugins.call(name,arguments)
         if result.get('status')!='pending_approval':return None
     else:
@@ -148,13 +148,13 @@ def _queue_approval(name,arguments,messages,computer_task_id=None):
         if name=='run_linux_command':audit_args={'command':'[shown only in pending approval]','cwd':arguments.get('cwd',''),'timeout_seconds':arguments.get('timeout_seconds',60)}
         elif name=='linux_desktop_action':audit_args={k:('[shown only in pending approval]' if k=='text' else v) for k,v in arguments.items()}
         elif name=='linux_file_action':audit_args={k:('[file contents shown only in pending approval]' if k=='content' else v) for k,v in arguments.items()}
-        db.log_action(name,audit_args,'pending_approval','Awaiting explicit user approval')
+        db.log_action(name,audit_args,'pending_approval','Awaiting explicit user approval'+(': '+reason if reason else ''))
     approval_id=db.execute("INSERT INTO tool_approvals(tool_name,arguments_json,context_json,status,result_json,created_at,updated_at) VALUES(?,?,?,'pending','',?,?)",(name,json.dumps(arguments,ensure_ascii=False),json.dumps(messages,ensure_ascii=False),db.now(),db.now()))
     if computer_task_id:
         db.execute('UPDATE tool_approvals SET computer_task_id=? WHERE id=?',(computer_task_id,approval_id))
         computer_tasks.set_status(computer_task_id,'waiting_approval',f'Waiting for approval to {computer_tasks._label(name,arguments).lower()}')
     from . import telegram
-    telegram.notify_approval(approval_id,name)
+    telegram.notify_approval(approval_id,name,reason)
     return approval_id
 
 def _tool_result_reply(name,content):
@@ -292,12 +292,33 @@ def _model_round(messages,remaining,emit,cancel,model,require_tool=False):
         _native_stream_tools=False
         return llm.chat_message(messages,tools=remaining,require_tool=require_tool,model=model)
 
+_UNTRUSTED_REASON="Sage read outside content (web, email, files or the screen) earlier in this request, so it checks with you before taking any action."
+
+def _started_tainted(messages):
+    """True when the request already holds text that someone else wrote: tool results from the web, email,
+    files or the screen, or a document or photo the user forwarded. Such text can hide instructions."""
+    for item in messages:
+        role=item.get('role')
+        if role=='user':
+            content=str(item.get('content',''))
+            if '<document>' in content or '(untrusted content)' in content:return True
+        elif role=='assistant':
+            for call in item.get('tool_calls') or []:
+                function=call.get('function',{}) if isinstance(call,dict) else {}
+                arguments=function.get('arguments',{})
+                if isinstance(arguments,str):
+                    try:arguments=json.loads(arguments)
+                    except ValueError:arguments={}
+                if tools.reads_untrusted(function.get('name',''),arguments):return True
+    return False
+
 def _tool_loop(messages,max_rounds=10,forced=None,emit=None,cancel=None,model=None,computer_task_id=None,telegram_origin=False):
     if model is None:
         latest_user=next((item.get('content','') for item in reversed(messages) if item.get('role')=='user'),'')
         model=llm.model_for_request(latest_user,use_tools=True)
     used_tools={m.get('tool_name') for m in messages if m.get('role')=='tool' and m.get('tool_name')}
     json_fallback=False
+    tainted=_started_tainted(messages)
     must_verify=False
     screen_seen=False
     pc_action_count=0
@@ -404,7 +425,7 @@ def _tool_loop(messages,max_rounds=10,forced=None,emit=None,cancel=None,model=No
             synthetic={'function':{'name':'inspect_linux_screen','arguments':{'question':'Describe current desktop state'}}}
             messages.append({'role':'assistant','content':'','tool_calls':[synthetic]})
             messages.append({'role':'tool','tool_name':'inspect_linux_screen','content':json.dumps(observed,ensure_ascii=False,default=str)})
-            used_tools.add('inspect_linux_screen');screen_seen=True
+            used_tools.add('inspect_linux_screen');screen_seen=True;tainted=True
             continue
         assistant_message={'role':'assistant','content':response.get('content',''),'tool_calls':calls}
         messages.append(assistant_message)
@@ -416,15 +437,21 @@ def _tool_loop(messages,max_rounds=10,forced=None,emit=None,cancel=None,model=No
                 return _save_assistant('*(stopped before the next computer action)*')
             telegram_review = telegram_origin and (name in {'run_linux_command','install_system_packages'} or
                              (name=='linux_file_action' and arguments.get('action') in {'write','move','delete'}))
-            if tools.permission(name,arguments)=='confirm' or telegram_review:
-                approval_id=_queue_approval(name,arguments,messages,computer_task_id if name in computer_tasks.PC_TOOL_NAMES else None)
-                notice=f"I can use `{name}` for this, but it needs your approval before it runs. Review the pending request below. (Approval {approval_id})"
+            needs_ok=tools.permission(name,arguments)=='confirm' or telegram_review
+            held=tainted and not needs_ok and tools.risky_after_untrusted(name,arguments)
+            if needs_ok or held:
+                reason=_UNTRUSTED_REASON if held else ''
+                approval_id=_queue_approval(name,arguments,messages,computer_task_id if name in computer_tasks.PC_TOOL_NAMES else None,force=held,reason=reason)
+                from . import telegram
+                extra=(' '+reason if held else '')+(' I also sent it to your Telegram.' if telegram.can_notify_approvals() else '')
+                notice=f"I can use `{name}` for this, but it needs your approval before it runs. Review the pending request below.{extra} (Approval {approval_id})"
                 if response.get('content','').strip():notice=response['content'].strip()+'\n\n'+notice
                 return _save_assistant(notice)
             result=tools.execute(name,arguments,cancel=cancel)
             content=json.dumps(result,ensure_ascii=False,default=str)
             if computer_task_id and step_label:computer_tasks.finish_step(computer_task_id,step_label,not (isinstance(result,dict) and bool(result.get('error'))))
             used_tools.add(name)
+            if tools.reads_untrusted(name,arguments):tainted=True
             if name=='inspect_linux_screen':must_verify=False;screen_seen=True
             elif name in {'linux_desktop_action','open_browser_url','launch_app'} or (name=='linux_file_action' and arguments.get('action')=='open'):must_verify=True;screen_seen=False;pc_action_count+=1
         except Exception as exc:

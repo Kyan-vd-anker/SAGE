@@ -286,6 +286,30 @@ def permission(name, arguments=None):
     return level
 
 
+# Text written by someone else (web pages, email, calendar invites, files, screens, PDFs) can hide instructions.
+# Once a request has read any of it, the tools in RISKY_AFTER_UNTRUSTED stop running on their own and wait for approval.
+UNTRUSTED_OUTPUT = frozenset({'web_search', 'search_emails', 'inbox_brief', 'latest_emails', 'get_outlook_calendar', 'search_calendar_events',
+                              'search_user_files', 'inspect_linux_screen', 'inspect_engineering_asset'})
+RISKY_AFTER_UNTRUSTED = frozenset({'run_linux_command', 'linux_desktop_action', 'open_browser_url', 'launch_app', 'workspace_write', 'export_plugin',
+                                   'install_system_packages', 'print_library_file', 'create_outlook_event', 'create_plugin', 'save_memory',
+                                   'schedule_task', 'manage_schedule', 'run_task_now', 'set_autopilot', 'forget_memory'})
+_READS_CONTENT = re.compile(r'(?i)\b(?:cat|less|more|head|tail|type|grep|strings|sed|awk|xxd|curl|wget)\b')
+
+def reads_untrusted(name, arguments=None):
+    """True when this tool's output contains text that someone else wrote."""
+    args = arguments if isinstance(arguments, dict) else {}
+    if name in UNTRUSTED_OUTPUT: return True
+    if name == 'linux_file_action': return args.get('action') == 'read'
+    if name == 'run_linux_command': return bool(_READS_CONTENT.search(str(args.get('command', ''))))
+    meta = next((p for p in plugins.discover() if p.get('name') == name), None)
+    return bool(meta and meta.get('untrusted_output'))
+
+def risky_after_untrusted(name, arguments=None):
+    """True when this action must be approved once untrusted text has been read in the same request."""
+    if name == 'linux_file_action': return (arguments or {}).get('action') not in ('list', 'read')
+    return name in RISKY_AFTER_UNTRUSTED
+
+
 def _audit(name,args,result):
     db.log_action(name,args,'completed',result)
     return result

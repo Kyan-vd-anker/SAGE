@@ -1,0 +1,19 @@
+{
+  "name": "pdf_reader",
+  "description": "Read the text of a PDF stored in Sage's workspace (up to 30 pages per call). Use first_page and last_page to read further.",
+  "version": "1.0.0",
+  "permission": "safe",
+  "untrusted_output": true,
+  "entrypoint": "pdf_reader.py:run",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "path": {"type": "string", "description": "PDF path relative to the workspace folder"},
+      "first_page": {"type": "integer", "description": "First page to read (default 1)"},
+      "last_page": {"type": "integer", "description": "Last page to read"},
+      "max_chars": {"type": "integer", "description": "Maximum characters returned (default 12000, maximum 30000)"}
+    },
+    "required": ["path"],
+    "additionalProperties": false
+  }
+}

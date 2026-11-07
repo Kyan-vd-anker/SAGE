@@ -1,0 +1,17 @@
+{
+  "name": "fluid_properties",
+  "description": "Look up density, specific heat, viscosity, thermal conductivity and Prandtl number of a fluid (water, ethanol, air, or any CoolProp fluid) at a temperature and pressure. Use this instead of guessing property values.",
+  "version": "1.0.0",
+  "permission": "safe",
+  "entrypoint": "fluid_properties.py:run",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "fluid": {"type": "string", "description": "Fluid name, for example Water, Ethanol, Air"},
+      "temperature_c": {"type": "number", "description": "Temperature in degrees Celsius"},
+      "pressure_kpa": {"type": "number", "description": "Absolute pressure in kPa (default 101.325)"}
+    },
+    "required": ["fluid", "temperature_c"],
+    "additionalProperties": false
+  }
+}
