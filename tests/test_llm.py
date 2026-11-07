@@ -112,3 +112,17 @@ class LlmTests(unittest.TestCase):
         with patch.object(llm, '_SPEEDS', __import__('collections').deque(maxlen=200)), patch('sage.llm.urllib.request.urlopen', return_value=response):
             llm.chat_message([{'role': 'user', 'content': 'hi'}], model='test-model')
             self.assertEqual(llm.speed_stats()['by_model']['test-model']['tokens_per_second'], 40.0)
+
+    def test_status_lists_every_model_lane_with_its_install_state(self):
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps({'models': [{'name': llm.MODEL}, {'name': llm.REASONING_MODEL}]}).encode()
+        with patch('sage.llm.urllib.request.urlopen', return_value=response):
+            lanes = {item['model']: item for item in llm.status()['lanes']}
+        self.assertTrue(lanes[llm.MODEL]['installed'] and 'Fast' in lanes[llm.MODEL]['role'])
+        self.assertFalse(lanes[llm.CODING_MODEL]['installed'])
+        self.assertIn('Reasoning', lanes[llm.REASONING_MODEL]['role'])
+        self.assertTrue(lanes[llm.REASONING_MODEL]['installed'])
+        with patch('sage.llm.urllib.request.urlopen', side_effect=OSError('down')):
+            offline = llm.status()
+        self.assertFalse(offline['online'])
+        self.assertEqual({item['installed'] for item in offline['lanes']}, {None})

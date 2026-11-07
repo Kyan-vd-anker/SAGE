@@ -349,6 +349,14 @@ def chat(messages, timeout=600, max_tokens=None, background=False, model=None):
     """Plain text completion used by background jobs and older callers."""
     return chat_message(messages, timeout=timeout, max_tokens=max_tokens, background=background, model=model).get('content','')
 
+def _lanes():
+    """The distinct models Sage routes to, with every role each one plays."""
+    lanes = {}
+    for role, name in (('Fast', MODEL), ('Coding', CODING_MODEL), ('Reasoning', REASONING_MODEL)):
+        lanes.setdefault(name, []).append(role)
+    return [(' + '.join(roles), name) for name, roles in lanes.items()]
+
+
 def status():
     req = urllib.request.Request(OLLAMA_URL.rstrip('/') + '/api/tags')
     try:
@@ -358,9 +366,11 @@ def status():
         def installed(name): return name in names or name.endswith(':latest') and name[:-7] in names
         return {"online": True, "model": MODEL, "installed": installed(MODEL),
                 "coding_model": installed(CODING_MODEL), "reasoning_model": installed(REASONING_MODEL), "vision_model": installed(VISION_MODEL),
-                "embedding_model": installed(EMBED_MODEL), "models": sorted(names)}
+                "embedding_model": installed(EMBED_MODEL), "models": sorted(names),
+                "lanes": [{'role': role, 'model': name, 'installed': installed(name)} for role, name in _lanes()]}
     except Exception as exc:
-        return {"online": False, "model": MODEL, "error": str(exc)}
+        return {"online": False, "model": MODEL, "error": str(exc),
+                "lanes": [{'role': role, 'model': name, 'installed': None} for role, name in _lanes()]}
 
 
 def describe_image(question, image_base64, timeout=120):

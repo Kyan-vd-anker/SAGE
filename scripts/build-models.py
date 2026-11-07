@@ -14,6 +14,7 @@ import subprocess
 import sys
 import urllib.request
 from pathlib import Path
+import time
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -103,6 +104,7 @@ def main():
     for name, base, _parameters in MODELS:
         ollama('pull', base)
         ollama('create', name, '-f', str(paths[name]))
+    time.sleep(5)  # give Ollama a moment to finish creating the models
     print('\nTesting the new models...')
     good = check()
     print('\nTo use them, set these (Kali: the same env file or drop-in as SAGE_PASSWORD; Windows: start-sage.local.bat):')
