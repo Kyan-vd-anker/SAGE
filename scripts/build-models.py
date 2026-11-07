@@ -13,6 +13,7 @@ import json
 import subprocess
 import sys
 import urllib.request
+import urllib.error
 from pathlib import Path
 import time
 
@@ -35,7 +36,9 @@ def modelfile_text(base, parameters):
     if '"""' in prompt:
         raise SystemExit('The system prompt contains triple quotes, which a Modelfile cannot hold.')
     lines = [f'FROM {base}']
-    lines += [f'PARAMETER {key} {value}' for key, value in parameters.items()]
+    # Ensure parameter numerical values don't get broken during parsing
+    for key, value in parameters.items():
+        lines.append(f'PARAMETER {key} {value}')
     lines.append(f'SYSTEM """{prompt}"""')
     return '\n'.join(lines) + '\n'
 
@@ -58,7 +61,7 @@ def ollama(*args):
     except FileNotFoundError:
         raise SystemExit('The ollama command was not found. Install Ollama and make sure it is on PATH.')
     except subprocess.CalledProcessError as exc:
-        raise SystemExit(f'ollama {args[0]} failed (exit code {exc.returncode}).')
+        raise SystemExit(f'ollama {args} failed (exit code {exc.returncode}).')
 
 
 def unload_all_models():
@@ -76,7 +79,6 @@ def unload_all_models():
             with urllib.request.urlopen(request, timeout=10) as response:
                 response.read()
         except Exception:
-            # Silence exceptions if a model wasn't loaded in the first place
             pass
 
 
@@ -85,14 +87,24 @@ def ask(name):
             'messages': [{'role': 'user', 'content': 'Who are you? Answer in one short sentence.'}]}
     request = urllib.request.Request(config.OLLAMA_URL.rstrip('/') + '/api/chat', data=json.dumps(body).encode(),
                                      headers={'Content-Type': 'application/json'}, method='POST')
-    with urllib.request.urlopen(request, timeout=300) as response:
-        return json.loads(response.read())
+    
+    try:
+        with urllib.request.urlopen(request, timeout=300) as response:
+            return json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        # Catch and print the exact JSON body from Ollama containing the actual internal error trace
+        try:
+            error_body = exc.read().decode('utf-8')
+            error_json = json.loads(error_body)
+            error_msg = error_json.get('error', error_body)
+            raise RuntimeError(f"Ollama Error Details: {error_msg}")
+        except Exception:
+            raise RuntimeError(f"HTTP Error {exc.code}: {exc.reason}")
 
 
 def check():
     ok = True
     for name, _base, _parameters in MODELS:
-        # Unload any previously tested model to free VRAM for the next model evaluation
         unload_all_models()
         try:
             ask(name)                 # first call loads the model
@@ -125,10 +137,8 @@ def main():
     for name, base, _parameters in MODELS:
         ollama('pull', base)
         ollama('create', name, '-f', str(paths[name]))
+    time.sleep(5)
     
-    time.sleep(5)  # give Ollama a moment to finish creating the models
-    
-    # Clean VRAM completely before launching tests
     unload_all_models()
     
     print('\nTesting the new models...')
