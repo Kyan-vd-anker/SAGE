@@ -85,7 +85,7 @@ def unload_all_models():
 
 def ask(name):
     body = {'model': name, 'stream': False, 'keep_alive': '30m', 'options': {'num_predict': 200},
-            'messages': [{'role': 'user', 'content': 'Who are you? Answer in one short sentence.'}]}
+            'messages': [{'role': 'user', 'content': 'Confirm system identity. Repeat your name back exactly if configured.'}]}
     request = urllib.request.Request(config.OLLAMA_URL.rstrip('/') + '/api/chat', data=json.dumps(body).encode(),
                                      headers={'Content-Type': 'application/json'}, method='POST')
     
