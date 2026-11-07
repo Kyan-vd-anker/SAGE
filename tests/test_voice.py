@@ -138,7 +138,7 @@ class VoiceGatewayStateTests(unittest.TestCase):
 
             self.assertEqual(voice.next_announcement(0)['text'], 'I am on it, sir.')
 
-    def test_speaker_acknowledges_after_recognition_before_answering(self):
+    def test_speaker_answers_without_a_spoken_acknowledgement(self):
         from types import SimpleNamespace
         from unittest.mock import patch
         from sage import voice
@@ -153,15 +153,13 @@ class VoiceGatewayStateTests(unittest.TestCase):
              patch('sage.voice.transcribe', return_value=('Turn on the lights', 'en')), \
              patch('sage.voice.vu.looks_like_noise', return_value=False), \
              patch('sage.voice.announce') as announce, \
-             patch('sage.voice.converse', side_effect=lambda *args: (
-                 announce.assert_called_once_with('I am on it, sir.', kind='ack', lang='en', ttl=30),
-                 ('The lights are on.', 'en', 'ok', False),
-             )[1]) as converse, \
+             patch('sage.voice.converse', return_value=('The lights are on.', 'en', 'ok', False)) as converse, \
              patch('sage.voice._bump'), \
              patch('sage.voice.audit'):
             self.assertEqual(voice.Handler._ask(handler, b'audio', 'speaker-ip'), 'spoken')
 
-        announce.assert_called_once_with('I am on it, sir.', kind='ack', lang='en', ttl=30)
+        announce.assert_not_called()
+        converse.assert_called_once()
 
     def test_gateway_exposes_wall_display_ring_state(self):
         from types import SimpleNamespace

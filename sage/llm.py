@@ -1,4 +1,5 @@
 import http.client
+import collections
 import io
 import json
 import re
@@ -20,6 +21,30 @@ _active_background_conn = None
 
 
 class BackgroundInterrupted(RuntimeError): pass
+
+_SPEEDS = collections.deque(maxlen=200)  # (time, model, tokens, seconds) for the last 200 replies; resets when Sage restarts
+_speed_lock = threading.Lock()
+
+def _record_speed(model, data):
+    """Remember how fast Ollama generated a reply (eval_count tokens over eval_duration nanoseconds)."""
+    try:
+        tokens = int(data.get('eval_count') or 0)
+        seconds = float(data.get('eval_duration') or 0) / 1e9
+    except (TypeError, ValueError, AttributeError):
+        return
+    if tokens < 5 or seconds <= 0: return  # very short replies give unreliable timings
+    with _speed_lock: _SPEEDS.append((time.time(), str(model), tokens, seconds))
+
+def speed_stats():
+    """Average generation speed in tokens per second: total tokens over total generation time, overall and per model."""
+    with _speed_lock: items = list(_SPEEDS)
+    def summary(rows):
+        tokens = sum(r[2] for r in rows); seconds = sum(r[3] for r in rows)
+        return {'tokens_per_second': round(tokens / seconds, 1) if seconds else None, 'replies': len(rows), 'tokens': tokens}
+    result = summary(items)
+    result['last_tokens_per_second'] = round(items[-1][2] / items[-1][3], 1) if items else None
+    result['by_model'] = {model: summary([r for r in items if r[1] == model]) for model in sorted({r[1] for r in items})}
+    return result
 
 
 def interrupt_background():
@@ -154,7 +179,9 @@ def _background_request(messages, max_tokens, timeout, model):
             chunk=json.loads(line)
             if chunk.get('error'): raise OllamaError(f"Ollama request failed at {OLLAMA_URL}: {chunk['error']}")
             parts.append(chunk.get('message',{}).get('content',''))
-            if chunk.get('done'): break
+            if chunk.get('done'):
+                _record_speed(model, chunk)
+                break
         if _background_interrupted.is_set(): raise BackgroundInterrupted('Background work yielded to chat.')
         return {'role':'assistant','content':''.join(parts)}
     except (BackgroundInterrupted, OllamaError): raise
@@ -236,7 +263,9 @@ def chat_stream(messages, tools=None, max_tokens=None, on_token=None, cancel=Non
                 parts.append(piece)
                 if on_token: on_token(piece)
             if message.get('tool_calls'): calls.extend(message['tool_calls'])
-            if chunk.get('done'): break
+            if chunk.get('done'):
+                _record_speed(model, chunk)
+                break
         if cancel is not None and cancel.cancelled: raise StreamCancelled(''.join(parts))
         reply = {'role': 'assistant', 'content': ''.join(parts)}
         if calls: reply['tool_calls'] = calls
@@ -279,6 +308,7 @@ def chat_message(messages, tools=None, timeout=600, max_tokens=None, background=
                     if background:
                         with _priority:
                             if _active_background_response is response: _active_background_response=None
+            _record_speed(model, data)
             return data.get('message', {})
         except urllib.error.HTTPError as exc:
             if background and _background_interrupted.is_set(): raise BackgroundInterrupted('Background work yielded to chat.') from exc
@@ -300,7 +330,7 @@ def chat_message(messages, tools=None, timeout=600, max_tokens=None, background=
                 fallback={'model':model,'messages':_baked(model,fallback_messages),'stream':False,'keep_alive':'30m','format':output_schema,'options':{'num_predict':min(max_tokens or 256,512)}}
                 retry=urllib.request.Request(OLLAMA_URL.rstrip('/')+'/api/chat',data=json.dumps(fallback).encode(),headers={'Content-Type':'application/json'},method='POST')
                 try:
-                    with urllib.request.urlopen(retry,timeout=timeout) as response: reply=json.loads(response.read()).get('message',{})
+                    with urllib.request.urlopen(retry,timeout=timeout) as response: fallback_data=json.loads(response.read()); _record_speed(model,fallback_data); reply=fallback_data.get('message',{})
                     reply['_sage_tool_fallback']=True
                     return reply
                 except Exception as retry_exc:

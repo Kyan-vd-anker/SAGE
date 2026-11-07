@@ -350,8 +350,8 @@ class Handler(BaseHTTPRequestHandler):
             try: source.relative_to((config.DATA/'engineering'/'photos').resolve())
             except ValueError: return send_json(self,{'error':'Invalid photo path'},400)
             data=source.read_bytes(); self.send_response(200); self.send_header('Content-Type',mimetypes.guess_type(filename)[0] or 'application/octet-stream'); self.send_header('Content-Length',str(len(data))); self.send_header('X-Content-Type-Options','nosniff'); self.end_headers(); self.wfile.write(data); return
-        if path=='/api/status': return send_json(self, {"ollama":llm.status(),"model":config.MODEL,"wake_word":config.WAKE_WORD,"web_search":config.WEB_SEARCH_ENABLED,"counts":{"memories":len(db.rows('SELECT id FROM memories')),"projects":len(db.rows('SELECT id FROM projects')),"jobs":len(db.rows('SELECT id FROM jobs'))}})
-        if path=='/api/system/health': return send_json(self,{'host':system_control.system_health(),'ollama':llm.status(),'chat_model':config.MODEL,'vision_model':config.VISION_MODEL})
+        if path=='/api/status': return send_json(self, {"ollama":llm.status(),"speed":llm.speed_stats(),"model":config.MODEL,"wake_word":config.WAKE_WORD,"web_search":config.WEB_SEARCH_ENABLED,"counts":{"memories":len(db.rows('SELECT id FROM memories')),"projects":len(db.rows('SELECT id FROM projects')),"jobs":len(db.rows('SELECT id FROM jobs'))}})
+        if path=='/api/system/health': return send_json(self,{'host':system_control.system_health(),'ollama':llm.status(),'speed':llm.speed_stats(),'chat_model':config.MODEL,'vision_model':config.VISION_MODEL})
         if path=='/api/telegram/status': return send_json(self,telegram.status())
         if path=='/api/wall': return send_json(self,wall_snapshot())
         if path=='/api/messages': return send_json(self,db.rows('SELECT * FROM messages ORDER BY id DESC LIMIT 80'))

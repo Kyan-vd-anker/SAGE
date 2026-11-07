@@ -1010,8 +1010,6 @@ class Handler(BaseHTTPRequestHandler):
                 audit('ask', 'noise', ip, heard=text)
                 return self._send(204)
             heard_ms = int((time.time() - started) * 1000)
-            if origin == 'speaker':
-                announce('I am on it, sir.', kind='ack', lang='en', ttl=30)
             spoken, reply_lang, outcome, listen = converse(text, lang, ip, origin)
             limit = 100 if origin == 'speaker' else 600
             headers = {'X-Sage-Heard': quote(text[:limit]), 'X-Sage-Reply': quote(spoken[:limit]), 'X-Sage-Lang': reply_lang,

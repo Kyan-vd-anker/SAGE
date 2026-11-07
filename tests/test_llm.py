@@ -91,3 +91,24 @@ class LlmTests(unittest.TestCase):
         sent = json.loads(urlopen.call_args.args[0].data)['messages']
         self.assertEqual(sent, [{'role': 'user', 'content': 'hi'}, {'role': 'system', 'content': 'Extra.'}])
         self.assertNotIn('STATIC rules.', json.dumps(sent))
+
+    def test_speed_stats_average_tokens_per_second_overall_and_per_model(self):
+        with patch.object(llm, '_SPEEDS', __import__('collections').deque(maxlen=200)):
+            llm._record_speed('sage-fast', {'eval_count': 100, 'eval_duration': 2_000_000_000})
+            llm._record_speed('sage-fast', {'eval_count': 300, 'eval_duration': 4_000_000_000})
+            llm._record_speed('sage-coder', {'eval_count': 50, 'eval_duration': 5_000_000_000})
+            llm._record_speed('x', {'eval_count': 2, 'eval_duration': 1_000_000_000})  # too short to measure
+            llm._record_speed('x', {})  # no timings
+            stats = llm.speed_stats()
+            self.assertEqual(stats['by_model']['sage-fast']['tokens_per_second'], 66.7)
+            self.assertEqual(stats['by_model']['sage-coder']['tokens_per_second'], 10.0)
+            self.assertEqual((stats['tokens_per_second'], stats['replies'], stats['last_tokens_per_second']), (40.9, 3, 10.0))
+        with patch.object(llm, '_SPEEDS', __import__('collections').deque(maxlen=200)):
+            self.assertEqual(llm.speed_stats()['tokens_per_second'], None)
+
+    def test_ollama_replies_feed_the_speed_average(self):
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps({'message': {'content': 'ok'}, 'eval_count': 80, 'eval_duration': 2_000_000_000}).encode()
+        with patch.object(llm, '_SPEEDS', __import__('collections').deque(maxlen=200)), patch('sage.llm.urllib.request.urlopen', return_value=response):
+            llm.chat_message([{'role': 'user', 'content': 'hi'}], model='test-model')
+            self.assertEqual(llm.speed_stats()['by_model']['test-model']['tokens_per_second'], 40.0)
