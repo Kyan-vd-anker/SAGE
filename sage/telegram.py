@@ -92,12 +92,16 @@ def status():
 
 
 def create_pair_code():
-    global _pair_code, _pair_expires, _pair_attempts
     if not config.TELEGRAM_BOT_TOKEN:
         raise TelegramError('Add the replacement bot token to Sage on Kali first.')
+    code = secrets.token_hex(4).upper()
     with _lock:
-        _pair_code = secrets.token_hex(4).upper(); _pair_expires = time.monotonic() + 600; _pair_attempts = 0
-        return {'code': _pair_code, 'expires_in_seconds': 600}
+        _save_setting('telegram_pairing', json.dumps({
+            'code': code,
+            'expires': time.time() + 600,
+            'attempts': 0,
+        }))
+    return {'code': code, 'expires_in_seconds': 600}
 
 
 def unlink():
@@ -286,7 +290,11 @@ def _command(chat_id, text):
     global _active_cancel
     parts = text.split(); cmd = parts[0].split('@', 1)[0].lower()
     if cmd in ('/start', '/help'):
-        _send(chat_id, 'Talk to Sage by text, voice note, photo, or document. Quick commands: /briefing, /tasks, /next, /approvals, /stop. Controls: /notifications on|off, /notify tasks|reminders|jobs|approvals on|off, /quiet HH:MM HH:MM or /quiet off. Memory: /memory, /memory on|off, /remember text, /forget ID. Approvals: tap a card or use /approve ID and /decline ID; risky actions also require /confirm ID PHRASE.'); return True
+        _send(chat_id, 'Talk to Sage by text, voice note, photo, or document. Quick commands: /briefing, /tasks, /next, /approvals, /stop, /where. Controls: /notifications on|off, /notify tasks|reminders|jobs|approvals on|off, /quiet HH:MM HH:MM or /quiet off. Memory: /memory, /memory on|off, /remember text, /forget ID. Approvals: tap a card or use /approve ID and /decline ID; risky actions also require /confirm ID PHRASE.'); return True
+    if cmd == '/where':
+        from . import presence
+        w = presence.where()
+        _send(chat_id, f"Your beacon is in the {w['room']} (signal {w['rssi']})." if w['state'] == 'room' else 'Your beacon is not near any receiver.' if w['state'] == 'away' else 'I cannot tell where you are: presence is off or a receiver is offline.'); return True
     if cmd == '/status':
         p = _prefs(); _send(chat_id, f"Sage is online. Notifications {'on' if p.get('enabled', True) else 'off'}; quiet hours {p.get('quiet_start') or 'off'}–{p.get('quiet_end') or ''}."); return True
     if cmd == '/unlink': unlink(); _send(chat_id, 'This Telegram chat has been unpaired from Sage.'); return True
@@ -392,7 +400,6 @@ def _handle_callback(callback):
 
 
 def _handle_message(message):
-    global _pair_code, _pair_expires, _pair_attempts
     chat = message.get('chat') or {}; chat_id = chat.get('id')
     if chat.get('type') != 'private' or chat_id is None: return
     text = str(message.get('text') or '').strip()
@@ -400,11 +407,21 @@ def _handle_message(message):
     if command == '/pair':
         supplied = text.split(maxsplit=1)[1].strip().upper() if len(text.split(maxsplit=1)) == 2 else ''
         with _lock:
-            valid = bool(_pair_code and _pair_attempts < 5 and time.monotonic() < _pair_expires and secrets.compare_digest(supplied, _pair_code))
-            if valid: _pair_code=''; _pair_expires=0; _pair_attempts=0
-            elif _pair_code and time.monotonic() < _pair_expires:
-                _pair_attempts += 1
-                if _pair_attempts >= 5: _pair_code=''; _pair_expires=0
+            try:
+                pairing = json.loads(_setting('telegram_pairing', '{}'))
+            except (ValueError, TypeError):
+                pairing = {}
+            code = str(pairing.get('code', ''))
+            expires = float(pairing.get('expires', 0) or 0)
+            attempts = int(pairing.get('attempts', 0) or 0)
+            valid = bool(code and attempts < 5 and time.time() < expires and secrets.compare_digest(supplied, code))
+            if valid:
+                _save_setting('telegram_pairing', '{}')
+            elif code and time.time() < expires:
+                attempts += 1
+                _save_setting('telegram_pairing', json.dumps(
+                    {} if attempts >= 5 else {'code': code, 'expires': expires, 'attempts': attempts}
+                ))
         if not valid: _send(chat_id, 'Pairing code invalid or expired. Generate a new one in Sage.'); return
         _save_setting('telegram_chat_id', chat_id); _send(chat_id, 'Paired with Sage. Send text, voice notes, photos, or documents. Use /help.'); return
     paired = _setting('telegram_chat_id')
@@ -451,6 +468,17 @@ def _event_category(kind):
     return None
 
 
+def _heard_on_speaker(category):
+    """Timers and reminders are already spoken on the speaker, so skip the phone copy while you are in that room."""
+    if category != 'reminders': return False
+    try:
+        from . import presence, voice
+        if voice._asleep or not voice.online(): return False
+        return presence.where().get('room') == config.SPEAKER_ROOM
+    except Exception:
+        return False
+
+
 def _notify_events():
     global _last_error
     saved=_setting('telegram_event_cursor'); since=int(saved) if saved.isdigit() else events.cursor()
@@ -463,7 +491,7 @@ def _notify_events():
                 category=_event_category(kind)
                 should=should and category is not None
                 chat_id=_setting('telegram_chat_id')
-                if should and chat_id and _enabled(category):
+                if should and chat_id and _enabled(category) and not _heard_on_speaker(category):
                     message=str(event.get('title') or 'Sage update'); body=str(event.get('body') or '').strip()
                     if body: message+='\n'+body
                     try: _send(chat_id,message[:3800]); _last_error=''

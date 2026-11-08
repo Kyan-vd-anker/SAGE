@@ -22,27 +22,37 @@ _active_background_conn = None
 
 class BackgroundInterrupted(RuntimeError): pass
 
-_SPEEDS = collections.deque(maxlen=200)  # (time, model, tokens, seconds) for the last 200 replies; resets when Sage restarts
+_SPEEDS = collections.deque(maxlen=200)  # (time, model, tokens, seconds, seconds to first token, cold start) for the last 200 replies; resets when Sage restarts
 _speed_lock = threading.Lock()
 
 def _record_speed(model, data):
-    """Remember how fast Ollama generated a reply (eval_count tokens over eval_duration nanoseconds)."""
+    """Remember how fast Ollama answered: tokens per second (eval_count over eval_duration) and the time before the
+    first token (model load plus reading the prompt). All durations from Ollama are in nanoseconds."""
     try:
         tokens = int(data.get('eval_count') or 0)
         seconds = float(data.get('eval_duration') or 0) / 1e9
+        loading = float(data.get('load_duration') or 0) / 1e9
+        reading = float(data.get('prompt_eval_duration') or 0) / 1e9
     except (TypeError, ValueError, AttributeError):
         return
-    if tokens < 5 or seconds <= 0: return  # very short replies give unreliable timings
-    with _speed_lock: _SPEEDS.append((time.time(), str(model), tokens, seconds))
+    if tokens < 1 or seconds <= 0: return
+    with _speed_lock: _SPEEDS.append((time.time(), str(model), tokens, seconds, loading + reading, loading > 1.0))
 
 def speed_stats():
-    """Average generation speed in tokens per second: total tokens over total generation time, overall and per model."""
+    """Average generation speed in tokens per second (total tokens over total generation time) and the average time
+    to first token, overall and per model. Replies under 5 tokens are left out of the speed, and the first token
+    time ignores replies that had to load the model from disk (cold starts)."""
     with _speed_lock: items = list(_SPEEDS)
     def summary(rows):
-        tokens = sum(r[2] for r in rows); seconds = sum(r[3] for r in rows)
-        return {'tokens_per_second': round(tokens / seconds, 1) if seconds else None, 'replies': len(rows), 'tokens': tokens}
+        fast = [r for r in rows if r[2] >= 5]
+        tokens = sum(r[2] for r in fast); seconds = sum(r[3] for r in fast)
+        warm = [r[4] for r in rows if not r[5] and r[4] > 0]
+        return {'tokens_per_second': round(tokens / seconds, 1) if seconds else None, 'replies': len(rows), 'tokens': tokens,
+                'first_token_seconds': round(sum(warm) / len(warm), 2) if warm else None, 'cold_starts': sum(1 for r in rows if r[5])}
     result = summary(items)
-    result['last_tokens_per_second'] = round(items[-1][2] / items[-1][3], 1) if items else None
+    last = [r for r in items if r[2] >= 5]
+    result['last_tokens_per_second'] = round(last[-1][2] / last[-1][3], 1) if last else None
+    result['last_first_token_seconds'] = round(items[-1][4], 2) if items and items[-1][4] > 0 else None
     result['by_model'] = {model: summary([r for r in items if r[1] == model]) for model in sorted({r[1] for r in items})}
     return result
 

@@ -80,6 +80,8 @@ def init():
         CREATE TABLE IF NOT EXISTS session_summaries(id INTEGER PRIMARY KEY, project_id INTEGER, job_id INTEGER, title TEXT NOT NULL, content TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'drafting', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS computer_tasks(id INTEGER PRIMARY KEY, goal TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'running', checkpoint TEXT NOT NULL DEFAULT '', steps_json TEXT NOT NULL DEFAULT '[]', pending_json TEXT NOT NULL DEFAULT '', resume_count INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
         ''')
+        _add_columns(c, 'messages', {'model': 'TEXT'})
+        _add_columns(c, 'tool_approvals', {'answer': 'TEXT NOT NULL DEFAULT ""'})
         c.execute("INSERT OR IGNORE INTO focus(id,enabled,project_id,goal,ends_at,updated_at) VALUES(1,0,NULL,'','',?)", (now(),))
         c.executescript('''
         CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY, kind TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '', level TEXT NOT NULL DEFAULT 'info', data_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL);

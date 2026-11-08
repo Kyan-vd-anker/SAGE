@@ -640,7 +640,7 @@ def _button_pending(origin):
     return bool(slot['id'] and slot['expires'] > time.time())
 
 
-def converse(text, lang, who, origin='speaker'):
+def converse(text, lang, who, origin='speaker', emit=None):
     """One turn of conversation, shared by the speaker and the phone: a spoken command, or the normal Sage chat with
     voice's reduced power. Returns (text to speak, language of the reply, outcome, whether to keep listening)."""
     from . import agent, jobs
@@ -656,7 +656,7 @@ def converse(text, lang, who, origin='speaker'):
             before = _max_approval_id()
             try:
                 with trust.source('voice'):
-                    answer = agent.respond(text)
+                    answer = agent.respond(text, emit=emit) if emit else agent.respond(text)
             finally:
                 jobs.touch()
             waiting = _new_approvals(before)
@@ -670,6 +670,110 @@ def converse(text, lang, who, origin='speaker'):
     spoken = vu.speech_text(answer, lang=reply_lang, max_chars=config.VOICE_MAX_CHARS) or ('Done.' if reply_lang == 'en' else 'Klaar.')
     audit('ask', outcome, who, heard=text, reply=spoken, detail=('refused for voice: ' + ', '.join(held)) if held else '')
     return spoken, reply_lang, outcome, (spoken.rstrip().endswith('?') or outcome == 'held')
+
+# ------------------------------------------------------------------ speaking while the model is still writing
+
+_SENTENCE_END = re.compile(r'[.!?\u2026]+["\')\]]*\s+')
+
+
+class _LiveReply:
+    """A plain chat reply that is still being written. Finished sentences are spoken while the model carries on."""
+
+    def __init__(self, lang):
+        self.cond = threading.Condition()
+        self.lang = lang
+        self.raw = ''            # everything the model has written so far
+        self.consumed = 0        # characters of `raw` already turned into spoken sentences
+        self.sentences = []      # finished sentences, cleaned for speech
+        self.chars = 0           # spoken characters so far
+        self.plain = False       # the model is writing the final answer directly, with no tools involved
+        self.blocked = False     # tools, code or reasoning notes appeared: only the finished answer can be spoken
+        self.capped = False      # the spoken length limit was reached
+        self.done = False
+        self.result = None       # what converse() returned
+
+    def feed(self, event):
+        kind = event.get('type')
+        with self.cond:
+            if kind == 'plain':
+                self.plain = True
+            elif kind == 'status' or (kind == 'reset' and self.sentences):
+                self.blocked = True
+            elif kind == 'reset':
+                self.raw, self.consumed = '', 0
+            elif kind == 'token' and self.plain:
+                self.raw += str(event.get('text') or '')
+                if '```' in self.raw or '<think' in self.raw.lower():
+                    self.blocked = True
+                elif not self.blocked:
+                    self._cut()
+            self.cond.notify_all()
+
+    def _cut(self):
+        limit = config.VOICE_MAX_CHARS
+        while not self.capped:
+            match = _SENTENCE_END.search(self.raw, self.consumed)
+            if not match: return
+            piece = self.raw[self.consumed:match.end()]
+            self.consumed = match.end()
+            cleaned = vu.speech_text(piece, lang=self.lang, max_chars=limit)
+            if not cleaned: continue
+            if self.chars + len(cleaned) > limit:
+                self.capped = True
+                return
+            self.sentences.append(cleaned)
+            self.chars += len(cleaned)
+
+    def tail(self):
+        """Text that never formed a full sentence (usually the last one), cleaned for speech."""
+        if self.capped: return ''
+        if self.result and self.result[2] == 'error': return str(self.result[0])
+        rest = self.raw[self.consumed:]
+        if not rest.strip(): return ''
+        return vu.speech_text(rest, lang=self.lang, max_chars=max(0, config.VOICE_MAX_CHARS - self.chars))
+
+    def remaining(self):
+        """Yield the sentences after the first one as they are finished, then whatever is left over."""
+        index = 1
+        while True:
+            with self.cond:
+                while index >= len(self.sentences) and not self.done:
+                    self.cond.wait(0.2)
+                if index >= len(self.sentences):
+                    break
+                sentence = self.sentences[index]
+                index += 1
+            yield sentence
+        tail = self.tail()
+        if tail: yield tail
+
+
+def converse_live(text, lang, who, origin='speaker'):
+    """converse() for the speaker, speaking while the model is still writing. Returns
+    (spoken, reply language, outcome, keep listening, live). `live` is None when the whole reply was ready at once, which is
+    the normal case: just speak `spoken`. Otherwise `spoken` is only the first sentence and live.remaining() yields the rest.
+    Whether to keep listening is then judged from the first sentence only, because the speaker needs it before audio starts."""
+    live = _LiveReply(lang)
+
+    def work():
+        try:
+            live.result = converse(text, lang, who, origin, emit=live.feed)
+        except Exception as exc:
+            _log('live', exc)
+            live.result = ('Sorry, something went wrong while answering.' if lang == 'en' else 'Sorry, er ging iets mis.', lang, 'error', False)
+        finally:
+            with live.cond:
+                live.done = True
+                live.cond.notify_all()
+
+    threading.Thread(target=work, name='sage-voice-reply', daemon=True).start()
+    with live.cond:
+        while not live.done and not live.sentences:
+            live.cond.wait(0.1)
+        if live.done:
+            return (*live.result, None)
+        first = live.sentences[0]
+    return first, vu.guess_lang(first, lang), 'ok', first.rstrip().endswith('?'), live
 
 # ------------------------------------------------------------------ security: lockout and signed requests
 
@@ -829,7 +933,7 @@ class Handler(BaseHTTPRequestHandler):
     def _json(self, value, status=200):
         self._send(status, json.dumps(value, ensure_ascii=False).encode())
 
-    def _stream_speech(self, text, lang, headers, ring=True):
+    def _stream_speech(self, text, lang, headers, ring=True, live=None):
         """Synthesise sentence by sentence and send each as soon as it is ready (chunked transfer)."""
         sentences = vu.split_sentences(text)
         if not sentences:
@@ -858,6 +962,9 @@ class Handler(BaseHTTPRequestHandler):
                 push(first)
                 for sentence in sentences[1:]:
                     push(tts(sentence, lang))
+                if live is not None:
+                    for sentence in live.remaining():
+                        push(tts(sentence, lang))
             except (BrokenPipeError, ConnectionError, OSError):
                 return
             except Exception as exc:
@@ -1010,7 +1117,11 @@ class Handler(BaseHTTPRequestHandler):
                 audit('ask', 'noise', ip, heard=text)
                 return self._send(204)
             heard_ms = int((time.time() - started) * 1000)
-            spoken, reply_lang, outcome, listen = converse(text, lang, ip, origin)
+            live = None
+            if origin == 'speaker' and config.VOICE_STREAM_REPLIES:
+                spoken, reply_lang, outcome, listen, live = converse_live(text, lang, ip, origin)
+            else:
+                spoken, reply_lang, outcome, listen = converse(text, lang, ip, origin)
             limit = 100 if origin == 'speaker' else 600
             headers = {'X-Sage-Heard': quote(text[:limit]), 'X-Sage-Reply': quote(spoken[:limit]), 'X-Sage-Lang': reply_lang,
                        'X-Sage-Listen': '1' if listen else '0', 'X-Sage-Stt-Ms': str(heard_ms)}
@@ -1020,7 +1131,7 @@ class Handler(BaseHTTPRequestHandler):
             if origin == 'speaker':
                 _bump('thinking', -1)
         try:
-            return self._stream_speech(spoken, reply_lang, headers, ring=(origin == 'speaker'))
+            return self._stream_speech(spoken, reply_lang, headers, ring=(origin == 'speaker'), live=live)
         except Exception as exc:
             _log('speak', exc)
             _set_error()

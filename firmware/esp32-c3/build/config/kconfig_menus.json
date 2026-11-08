@@ -5962,10 +5962,7 @@
                 "help": null,
                 "id": "SAGE_PRESENCE_SERVER_PORT",
                 "name": "SAGE_PRESENCE_SERVER_PORT",
-                "range": [
-                    1,
-                    65535
-                ],
+                "range": null,
                 "title": "Sage voice gateway port",
                 "type": "int"
             },

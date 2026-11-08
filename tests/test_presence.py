@@ -30,6 +30,36 @@ class BlePresenceTests(unittest.TestCase):
             item.stop()
         self.temp.cleanup()
 
+    def test_where_reports_the_room_with_the_strongest_signal(self):
+        presence.report("bedroom-speaker", -80, now=1000)
+        presence.report("engineering-c3", -55, now=1000)
+        self.assertEqual(presence.where(now=1010)["room"], "engineering")
+        presence.report("bedroom-speaker", -50, now=1020)
+        result = presence.where(now=1025)
+        self.assertEqual((result["state"], result["room"]), ("room", "bedroom"))
+
+    def test_where_tells_away_from_unknown(self):
+        presence.report("bedroom-speaker", None, now=1000)
+        presence.report("engineering-c3", None, now=1000)
+        self.assertEqual(presence.where(now=1010), {"state": "away", "room": None})
+        self.assertEqual(presence.where(now=1500)["state"], "unknown")  # the receivers stopped reporting
+        with patch.object(config, "BLE_PRESENCE_ENABLED", False):
+            self.assertEqual(presence.where()["state"], "unknown")
+
+    def test_phone_copy_of_a_reminder_is_skipped_only_while_you_are_in_the_speaker_room(self):
+        from sage import telegram
+        in_room = {"state": "room", "room": "bedroom"}
+        with patch.object(config, "SPEAKER_ROOM", "bedroom"), patch.object(voice, "_asleep", False), patch.object(voice, "online", return_value=True):
+            with patch.object(presence, "where", return_value=in_room):
+                self.assertTrue(telegram._heard_on_speaker("reminders"))
+                self.assertFalse(telegram._heard_on_speaker("tasks"))
+            with patch.object(presence, "where", return_value={"state": "away", "room": None}):
+                self.assertFalse(telegram._heard_on_speaker("reminders"))
+            with patch.object(presence, "where", return_value={"state": "room", "room": "engineering"}):
+                self.assertFalse(telegram._heard_on_speaker("reminders"))
+        with patch.object(voice, "_asleep", True), patch.object(voice, "online", return_value=True), patch.object(presence, "where", return_value=in_room):
+            self.assertFalse(telegram._heard_on_speaker("reminders"))
+
     def test_requires_beacon_to_be_lost_for_ten_minutes_and_nodes_online(self):
         presence.report("bedroom-speaker", -80, now=1000)
         presence.report("engineering-c3", -80, now=1000)

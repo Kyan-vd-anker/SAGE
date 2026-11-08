@@ -16,7 +16,7 @@ set "SAGE_ALLOWED_CLIENT_IPS=192.168.1.50,192.168.1.51"
 set "SAGE_VOICE_SECRET=use-the-same-random-secret-on-the-speaker-and-receiver"
 set "SAGE_BLE_PRESENCE=1"
 set "SAGE_BLE_NODE_ROOMS=bedroom-speaker:bedroom,engineering-c3:engineering"
-set "SAGE_BLE_NEAR_RSSI=-65"
+set "SAGE_BLE_NEAR_RSSI=-80"
 set "SAGE_BLE_AWAY_SECONDS=600"
 ```
 
@@ -65,6 +65,6 @@ The menuconfig values are saved in `sdkconfig`, which contains Wi-Fi credentials
 
 1. Confirm `/api/voice/presence` lists both `bedroom-speaker` and `engineering-c3` as online.
 2. Keep the beacon near a receiver for a moment, then take it out of range of both receivers for at least 10 minutes while both remain online.
-3. Bring it near the bedroom speaker. Sage says **“Hello sir.”** once when bedroom RSSI reaches the threshold, default `-65` dBm. A first-ever beacon sighting does not trigger a greeting.
+3. Bring it near the bedroom speaker. Sage says **“Hello sir.”** once when bedroom RSSI reaches the threshold, default `-80` dBm. A first-ever beacon sighting does not trigger a greeting.
 
 BLE signal strength varies with orientation, walls, and interference; tune `SAGE_BLE_NEAR_RSSI` based on the room rather than treating it as a guaranteed distance. A future smart speaker in the engineering room can replace the C3 receiver by posting the same signed heartbeat with node ID `engineering-c3`.

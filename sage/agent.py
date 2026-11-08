@@ -1,5 +1,6 @@
 import json
 import re
+from contextvars import ContextVar
 from datetime import datetime
 from urllib.parse import urlsplit
 from . import config, db, llm, plugins, code_output, tools, memory, commands, trust, computer_tasks, octoprint
@@ -90,6 +91,11 @@ SYSTEM = """
     and prioritize verified information over assumptions.
     """
 
+_answer_model = ContextVar('sage_answer_model', default=None)
+
+def answer_model():
+    return _answer_model.get()
+
 
 def _current_time_context():
     """Provide the model with the local date and clock for this request."""
@@ -133,7 +139,7 @@ def web_search_query(text):
 
 def _save_assistant(answer):
     answer,_=code_output.save_answer(answer)
-    db.execute('INSERT INTO messages(role,content,created_at) VALUES(?,?,?)',('assistant',answer,db.now()))
+    db.execute('INSERT INTO messages(role,content,created_at,model) VALUES(?,?,?,?)',('assistant',answer,db.now(),_answer_model.get()))
     return answer
 
 def _context_setting(key,default):
@@ -580,6 +586,7 @@ def _tool_loop(messages,max_rounds=10,forced=None,emit=None,cancel=None,model=No
 
 def respond(user_text,project_id=None,emit=None,cancel=None,computer_task_id=None,allow_memory_capture=True,telegram_origin=False):
     if not user_text.strip(): raise ValueError('Message is empty')
+    _answer_model.set(None)
     if user_text.startswith('/tool '):
         try:
             _, name, raw = user_text.split(' ', 2)
@@ -641,11 +648,13 @@ def respond(user_text,project_id=None,emit=None,cancel=None,computer_task_id=Non
     elif any(item.get('function',{}).get('name') in computer_tasks.PC_TOOL_NAMES for item in tool_candidates):
         computer_task_id=computer_tasks.create(user_text)
     model=llm.model_for_request(user_text,use_tools=bool(forced or tool_candidates))
+    _answer_model.set(model)
     try:
         if not forced and not tool_candidates:
             # Small talk / plain questions: one fast model call, no tool selection round-trips.
             messages[0]['content']+='\nNo tool is needed for this message. Reply directly and briefly in natural language. Never claim that you ran a tool or plugin, and never invent tool output.'
             max_tokens=128 if smalltalk else 700
+            if emit:emit({'type':'plain'})  # no tools involved: the voice gateway may start speaking while this is written
             if emit:reply=llm.chat_stream(messages,max_tokens=max_tokens,on_token=lambda piece:emit({'type':'token','text':piece}),cancel=cancel,model=model)
             else:reply=llm.chat_message(messages,max_tokens=max_tokens,model=model)
             answer=_save_assistant(str(reply.get('content','')).strip() or 'I could not produce an answer for that. Please try rephrasing.')
@@ -670,8 +679,13 @@ def respond(user_text,project_id=None,emit=None,cancel=None,computer_task_id=Non
     return answer
 
 def resolve_tool_approval(approval_id,approved):
-    rows=db.rows("SELECT * FROM tool_approvals WHERE id=? AND status='pending'",(approval_id,))
-    if not rows:raise ValueError('This tool request is no longer waiting for approval')
+    rows=db.rows("SELECT * FROM tool_approvals WHERE id=?",(approval_id,))
+    if not rows:raise ValueError('This tool request could not be found')
+    if rows[0]['status']!='pending':
+        answer=str(rows[0].get('answer') or '').strip()
+        if answer:
+            return answer
+        raise ValueError(f"This tool request was already {rows[0]['status']}")
     row=rows[0];name=row['tool_name'];arguments=json.loads(row['arguments_json']);messages=json.loads(row['context_json']);computer_task_id=row.get('computer_task_id')
     if not approved:
         safe_args=arguments
@@ -682,7 +696,9 @@ def resolve_tool_approval(approval_id,approved):
         if computer_task_id:
             computer_tasks.finish_step(computer_task_id,computer_tasks._label(name,arguments),False)
             computer_tasks.set_status(computer_task_id,'interrupted','Approval was declined. Review the remaining task before resuming.')
-        return _save_assistant(f'I did not run `{name}`. The request was declined.')
+        answer=_save_assistant(f'I did not run `{name}`. The request was declined.')
+        db.execute('UPDATE tool_approvals SET answer=? WHERE id=?',(answer,approval_id))
+        return answer
     step_label=computer_tasks._label(name,arguments) if computer_task_id else None
     try:
         result=tools.execute(name,arguments,approved=True)
@@ -703,6 +719,7 @@ def resolve_tool_approval(approval_id,approved):
     db.execute('UPDATE tool_approvals SET arguments_json=?,context_json=? WHERE id=?',(json.dumps(stored_args,ensure_ascii=False),'[]',approval_id))
     messages.append({'role':'tool','tool_name':name,'content':content})
     answer=_tool_loop(messages,computer_task_id=computer_task_id)
+    db.execute('UPDATE tool_approvals SET answer=? WHERE id=?',(answer,approval_id))
     if computer_task_id:
         task=computer_tasks.get(computer_task_id)
         if task and task['status']=='running':computer_tasks.set_status(computer_task_id,'completed','Task finished or Sage reached a safe stopping point')

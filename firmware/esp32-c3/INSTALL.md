@@ -30,7 +30,7 @@ The speaker is already working, so most of this exists. Check it, and add the ne
    SAGE_VOICE_SECRET=<same secret as the speaker>
    SAGE_BLE_PRESENCE=1
    SAGE_BLE_NODE_ROOMS=bedroom-speaker:bedroom,engineering-c3:engineering
-   SAGE_BLE_NEAR_RSSI=-65
+   SAGE_BLE_NEAR_RSSI=-80
    SAGE_BLE_AWAY_SECONDS=600
    SAGE_ALLOWED_CLIENT_IPS=<speaker IP>,<engineering receiver IP>
    ```

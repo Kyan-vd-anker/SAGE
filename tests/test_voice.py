@@ -145,7 +145,7 @@ class VoiceGatewayStateTests(unittest.TestCase):
 
         handler = SimpleNamespace(
             _send=lambda status: status,
-            _stream_speech=lambda text, lang, headers, ring: 'spoken',
+            _stream_speech=lambda text, lang, headers, ring, live=None: 'spoken',
         )
         with patch('sage.voice.vu.parse_audio', return_value=b'pcm'), \
              patch('sage.voice.vu.seconds', return_value=1), \
@@ -160,6 +160,59 @@ class VoiceGatewayStateTests(unittest.TestCase):
 
         announce.assert_not_called()
         converse.assert_called_once()
+
+    def test_live_reply_hands_out_finished_sentences_while_the_model_writes(self):
+        from sage import voice
+
+        live = voice._LiveReply('en')
+        for event in ({'type': 'plain'}, {'type': 'token', 'text': 'Hello there. How are'}, {'type': 'token', 'text': ' you today? '}, {'type': 'token', 'text': 'Fine.'}):
+            live.feed(event)
+        self.assertEqual(live.sentences, ['Hello there.', 'How are you today?'])
+        live.result, live.done = ('x', 'en', 'ok', False), True
+        self.assertEqual(list(live.remaining()), ['How are you today?', 'Fine.'])
+
+    def test_live_reply_waits_for_the_finished_answer_when_tools_or_code_appear(self):
+        from sage import voice
+
+        untouched = voice._LiveReply('en')
+        untouched.feed({'type': 'token', 'text': 'Not plain. Never spoken early. '})
+        self.assertEqual(untouched.sentences, [])
+        code = voice._LiveReply('en')
+        for event in ({'type': 'plain'}, {'type': 'token', 'text': 'Sure. '}, {'type': 'token', 'text': 'Here it is: ```x = 1``` Done. '}):
+            code.feed(event)
+        self.assertEqual(code.sentences, ['Sure.'])
+        code.done = True
+        self.assertNotIn('```', ' '.join(code.remaining()))
+        tools = voice._LiveReply('en')
+        tools.feed({'type': 'plain'}); tools.feed({'type': 'status', 'text': 'Using a tool'}); tools.feed({'type': 'token', 'text': 'Late reply. '})
+        self.assertEqual(tools.sentences, [])
+
+    def test_converse_live_returns_after_the_first_sentence_and_streams_the_rest(self):
+        import threading
+        from unittest.mock import patch
+        from sage import voice
+
+        gate = threading.Event()
+
+        def slow_model(text, lang, who, origin='speaker', emit=None):
+            emit({'type': 'plain'}); emit({'type': 'token', 'text': 'First sentence. '})
+            gate.wait(5)
+            emit({'type': 'token', 'text': 'Second one.'})
+            return 'First sentence. Second one.', 'en', 'ok', False
+
+        with patch('sage.voice.converse', side_effect=slow_model):
+            spoken, lang, outcome, listen, live = voice.converse_live('hi', 'en', 'ip')
+            self.assertEqual((spoken, lang, outcome, listen), ('First sentence.', 'en', 'ok', False))
+            self.assertIsNotNone(live)
+            gate.set()
+            self.assertEqual(list(live.remaining()), ['Second one.'])
+
+    def test_converse_live_returns_the_whole_reply_when_no_streaming_happened(self):
+        from unittest.mock import patch
+        from sage import voice
+
+        with patch('sage.voice.converse', return_value=('Done.', 'en', 'ok', False)):
+            self.assertEqual(voice.converse_live('hi', 'en', 'ip'), ('Done.', 'en', 'ok', False, None))
 
     def test_gateway_exposes_wall_display_ring_state(self):
         from types import SimpleNamespace

@@ -111,6 +111,25 @@ def report(node, rssi, now=None):
     }
 
 
+def where(now=None):
+    """Which room the beacon is in right now: the receiver with the strongest signal above SAGE_BLE_NEAR_RSSI.
+    state is 'room' (room is set), 'away' (every receiver is online but none can see the beacon), or 'unknown'
+    (presence is off or a receiver is offline, so not seeing the beacon proves nothing)."""
+    if not config.BLE_PRESENCE_ENABLED:
+        return {"state": "unknown", "room": None}
+    nodes = status(now)
+    best = None
+    for name, node in nodes.items():
+        if not node["online"] or node["rssi"] is None or node["rssi"] < config.BLE_NEAR_RSSI:
+            continue
+        if best is None or node["rssi"] > best["rssi"]:
+            best = {**node, "node": name}
+    if best:
+        return {"state": "room", "room": best["room"], "rssi": best["rssi"], "node": best["node"]}
+    everyone_online = bool(nodes) and all(node["online"] for node in nodes.values())
+    return {"state": "away" if everyone_online else "unknown", "room": None}
+
+
 def status(now=None):
     """Return configured scanner health and latest beacon sightings."""
     now = time.time() if now is None else float(now)

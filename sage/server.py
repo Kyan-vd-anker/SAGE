@@ -164,7 +164,7 @@ class Handler(BaseHTTPRequestHandler):
         emit({'type':'start','id':stream_id})
         try:
             answer=agent.respond(message,project_id=project_id,emit=emit,cancel=cancel,computer_task_id=computer_task_id)
-            emit({'type':'done','answer':answer,'stopped':cancel.cancelled})
+            emit({'type':'done','answer':answer,'model':agent.answer_model(),'stopped':cancel.cancelled})
         except Exception as exc:
             emit({'type':'error','error':str(exc)})
         finally:
@@ -579,7 +579,7 @@ class Handler(BaseHTTPRequestHandler):
                     if not db.rows('SELECT id FROM projects WHERE id=?',(project_id,)): return send_json(self,{'error':'Project not found'},404)
                 try: answer=agent.respond(str(body.get('message','')),project_id=project_id)
                 finally: jobs.touch()
-                return send_json(self,{"answer":answer})
+                return send_json(self,{"answer":answer,"model":agent.answer_model()})
             if path=='/api/measurement-templates':
                 title=str(body.get('title','')).strip()[:160];fields=body.get('fields',[]);pid=body.get('project_id') or None
                 if not title or not isinstance(fields,list) or not fields or len(fields)>40:return send_json(self,{'error':'Add a title and 1–40 measurement fields'},400)

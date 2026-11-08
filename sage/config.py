@@ -27,6 +27,8 @@ ALLOWED_APPS = os.getenv("SAGE_ALLOWED_APPS", "{}")
 WEB_SEARCH_ENABLED = os.getenv("SAGE_WEB_SEARCH_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 WAKE_WORD = os.getenv("SAGE_WAKE_WORD", "sage")
 PASSWORD = os.getenv("SAGE_PASSWORD", "")  # dashboard login; empty = no login (set it in the ignored start-sage.local.bat)
+VOICE_STREAM_REPLIES = os.getenv("SAGE_VOICE_STREAM", "1").lower() in ("1", "true", "yes", "on")  # speaker talks while the model is still writing
+SPEAKER_ROOM = os.getenv("SAGE_SPEAKER_ROOM", "bedroom")  # the room the speaker is in (as named in SAGE_BLE_NODE_ROOMS)
 LOGIN_EXEMPT_IPS = {item.strip() for item in os.getenv("SAGE_LOGIN_EXEMPT_IPS", "").split(",") if item.strip()}  # devices that skip the login (e.g. wall display); empty by default
 HA_TOKEN = os.getenv("SAGE_HA_TOKEN", "")
 SHORTCUT_TOKEN = os.getenv("SAGE_SHORTCUT_TOKEN", "")
@@ -64,7 +66,7 @@ for _ble_node in os.getenv(
         _node, _room = (part.strip() for part in _ble_node.split(":", 1))
         if _node and _room:
             BLE_NODE_ROOMS[_node] = _room
-BLE_NEAR_RSSI = int(os.getenv("SAGE_BLE_NEAR_RSSI", "-65"))
+BLE_NEAR_RSSI = int(os.getenv("SAGE_BLE_NEAR_RSSI", "-80"))
 BLE_AWAY_SECONDS = int(os.getenv("SAGE_BLE_AWAY_SECONDS", "600"))
 BLE_NODE_TIMEOUT_SECONDS = int(os.getenv("SAGE_BLE_NODE_TIMEOUT_SECONDS", "90"))
 if not -127 <= BLE_NEAR_RSSI <= 0:

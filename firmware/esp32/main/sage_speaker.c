@@ -53,8 +53,10 @@
 static const char *TAG = "sage-speaker";
 static EventGroupHandle_t wifi_events;
 static SemaphoreHandle_t audio_stream_mutex;
+static SemaphoreHandle_t post_request_mutex;
 static QueueHandle_t ring_report_queue;
 static volatile bool speaker_active;
+static volatile bool audio_request_active;
 static volatile int64_t followup_until_ms;
 static volatile int64_t suppress_wake_until_ms;
 static char sage_server_ip[16];
@@ -269,7 +271,11 @@ static esp_http_client_handle_t new_client(const char *path, const char *method,
         .url = url,
         .event_handler = http_event,
         .user_data = audio,
-        .timeout_ms = 45000,
+        .timeout_ms = post_audio
+                          ? 120000
+                          : (strstr(path, "poll?wait=") || strstr(path, "state?since=")
+                                 ? 35000
+                                 : 5000),
         .buffer_size = 4096,
         .buffer_size_tx = 4096,
         .keep_alive_enable = false,
@@ -297,6 +303,16 @@ static esp_http_client_handle_t new_client(const char *path, const char *method,
 static int perform_request(const char *path, const char *method, const uint8_t *body,
                            size_t body_size, bool post_audio, bool play_response, bool *listen)
 {
+    bool post_request = strcmp(method, "POST") == 0;
+    if (post_request) {
+        TickType_t wait = post_audio ? pdMS_TO_TICKS(5000) : 0;
+        if (xSemaphoreTake(post_request_mutex, wait) != pdTRUE) {
+            if (post_audio) {
+                ESP_LOGE(TAG, "Timed out waiting to send %s", path);
+            }
+            return -1;
+        }
+    }
     if (listen) {
         *listen = false;
     }
@@ -309,6 +325,9 @@ static int perform_request(const char *path, const char *method, const uint8_t *
         (play_response || listen) ? &audio : NULL);
     if (!client) {
         ESP_LOGE(TAG, "Could not create or sign request for %s", path);
+        if (post_request) {
+            xSemaphoreGive(post_request_mutex);
+        }
         return -1;
     }
     esp_err_t err = esp_http_client_perform(client);
@@ -324,6 +343,9 @@ static int perform_request(const char *path, const char *method, const uint8_t *
         suppress_wake_until_ms = esp_timer_get_time() / 1000 + 800;
         has_pcm_carry = false;
         xSemaphoreGive(audio_stream_mutex);
+    }
+    if (post_request) {
+        xSemaphoreGive(post_request_mutex);
     }
     return status;
 }
@@ -674,6 +696,10 @@ static void ring_state_task(void *arg)
     int version = -1;
     board_light_state_t last_state = (board_light_state_t)-1;
     for (;;) {
+        if (audio_request_active) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
         char path[96];
         char response[256] = {0};
         snprintf(path, sizeof(path), "/api/voice/state?since=%d&wait=20", version);
@@ -706,6 +732,7 @@ static void send_utterance(size_t byte_count)
 {
     if (byte_count < SAGE_AUDIO_RATE * 2 / 3) {
         report_ring("idle");
+        audio_request_active = false;
         return;
     }
     ESP_LOGI(TAG, "Sending %.1f seconds of audio", (float)byte_count / (SAGE_AUDIO_RATE * 2));
@@ -713,10 +740,14 @@ static void send_utterance(size_t byte_count)
     int status = perform_request("/api/voice/ask", "POST", (uint8_t *)capture_pcm,
                                 byte_count, true, true, &listen);
     report_ring("idle");
+    if (status != 200) {
+        followup_until_ms = 0;
+    }
     if (status == 200 && listen) {
         ESP_LOGI(TAG, "Follow-up listening enabled for %d seconds", FOLLOWUP_LISTEN_MS / 1000);
         followup_until_ms = esp_timer_get_time() / 1000 + FOLLOWUP_LISTEN_MS;
     }
+    audio_request_active = false;
 }
 
 static void feed_frame(int16_t *raw, int16_t *mono, int chunk_samples)
@@ -836,6 +867,10 @@ static void audio_task(void *arg)
 
     unsigned fetch_debug_counter = 0;
     for (;;) {
+        if (audio_request_active) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
         feed_frame(raw, mono, chunk_samples);
         afe_fetch_result_t *result = afe->fetch_with_delay(afe_data, pdMS_TO_TICKS(100));
         if (!result || result->ret_value == ESP_FAIL || speaker_active) {
@@ -853,6 +888,7 @@ static void audio_task(void *arg)
             (result->wakeup_state == WAKENET_DETECTED ||
              (followup && result->vad_state == VAD_SPEECH))) {
             followup_until_ms = 0;
+            audio_request_active = true;
             board_light_set_state(BOARD_LIGHT_LISTENING);
             report_ring("listening");
             size_t captured = capture_after_wake(raw, mono, chunk_samples);
@@ -864,6 +900,10 @@ static void audio_task(void *arg)
 static void poll_task(void *arg)
 {
     for (;;) {
+        if (audio_request_active) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
         int status = perform_request("/api/voice/poll?wait=25", "GET", NULL, 0, false, true, NULL);
         if (status < 0) {
             vTaskDelay(pdMS_TO_TICKS(3000));
@@ -961,6 +1001,11 @@ void app_main(void)
     audio_stream_mutex = xSemaphoreCreateMutex();
     if (!audio_stream_mutex) {
         ESP_LOGE(TAG, "Could not create audio stream mutex");
+        abort();
+    }
+    post_request_mutex = xSemaphoreCreateMutex();
+    if (!post_request_mutex) {
+        ESP_LOGE(TAG, "Could not create HTTP POST mutex");
         abort();
     }
     ring_report_queue = xQueueCreate(4, sizeof(ring_report_state_t));

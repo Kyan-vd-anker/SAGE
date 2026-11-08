@@ -1,7 +1,7 @@
 {
     "version":            "1.2",
     "project_name":       "sage_presence_c3",
-    "project_version":    "v2.4.0-12-g0f13942-dirty",
+    "project_version":    "v2.4.0-28-ge72f651-dirty",
     "project_path":       "C:/Github Sage/SAGE/firmware/esp32-c3",
     "idf_path":           "C:/Espressif/frameworks/esp-idf-v5.5.6",
     "build_dir":          "C:/Github Sage/SAGE/firmware/esp32-c3/build",

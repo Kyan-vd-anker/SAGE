@@ -94,15 +94,19 @@ class LlmTests(unittest.TestCase):
 
     def test_speed_stats_average_tokens_per_second_overall_and_per_model(self):
         with patch.object(llm, '_SPEEDS', __import__('collections').deque(maxlen=200)):
-            llm._record_speed('sage-fast', {'eval_count': 100, 'eval_duration': 2_000_000_000})
-            llm._record_speed('sage-fast', {'eval_count': 300, 'eval_duration': 4_000_000_000})
-            llm._record_speed('sage-coder', {'eval_count': 50, 'eval_duration': 5_000_000_000})
-            llm._record_speed('x', {'eval_count': 2, 'eval_duration': 1_000_000_000})  # too short to measure
+            llm._record_speed('sage-fast', {'eval_count': 100, 'eval_duration': 2_000_000_000, 'prompt_eval_duration': 200_000_000})
+            llm._record_speed('sage-fast', {'eval_count': 300, 'eval_duration': 4_000_000_000, 'prompt_eval_duration': 400_000_000})
+            llm._record_speed('sage-fast', {'eval_count': 4, 'eval_duration': 1_000_000_000, 'load_duration': 3_000_000_000, 'prompt_eval_duration': 500_000_000})  # cold start
+            llm._record_speed('sage-coder', {'eval_count': 50, 'eval_duration': 5_000_000_000, 'prompt_eval_duration': 500_000_000})
+            llm._record_speed('x', {'eval_count': 2, 'eval_duration': 1_000_000_000, 'prompt_eval_duration': 100_000_000})  # too short for a speed, still has a first token time
             llm._record_speed('x', {})  # no timings
             stats = llm.speed_stats()
             self.assertEqual(stats['by_model']['sage-fast']['tokens_per_second'], 66.7)
+            self.assertEqual((stats['by_model']['sage-fast']['first_token_seconds'], stats['by_model']['sage-fast']['cold_starts']), (0.3, 1))
+            self.assertEqual(stats['by_model']['sage-coder']['first_token_seconds'], 0.5)
+            self.assertEqual((stats['tokens_per_second'], stats['replies'], stats['first_token_seconds']), (40.9, 5, 0.3))
+            self.assertEqual((stats['last_tokens_per_second'], stats['last_first_token_seconds']), (10.0, 0.1))
             self.assertEqual(stats['by_model']['sage-coder']['tokens_per_second'], 10.0)
-            self.assertEqual((stats['tokens_per_second'], stats['replies'], stats['last_tokens_per_second']), (40.9, 3, 10.0))
         with patch.object(llm, '_SPEEDS', __import__('collections').deque(maxlen=200)):
             self.assertEqual(llm.speed_stats()['tokens_per_second'], None)
 

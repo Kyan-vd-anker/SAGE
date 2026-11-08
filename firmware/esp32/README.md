@@ -33,7 +33,7 @@ The speaker calls Sage over the local network. First configure Sage's voice gate
    set "SAGE_VOICE_SECRET=paste-a-private-random-secret-here"
    set "SAGE_BLE_PRESENCE=1"
    set "SAGE_BLE_NODE_ROOMS=bedroom-speaker:bedroom,engineering-c3:engineering"
-   set "SAGE_BLE_NEAR_RSSI=-65"
+   set "SAGE_BLE_NEAR_RSSI=-80"
    ```
 
    Replace both example device addresses with their reserved addresses. The carried beacon needs no Wi-Fi address. Generate a secret in PowerShell with:
