@@ -678,7 +678,25 @@ def respond(user_text,project_id=None,emit=None,cancel=None,computer_task_id=Non
     model=llm.model_for_request(user_text,use_tools=bool(forced or tool_candidates))
     _answer_model.set(model)
     try:
-        if not forced and not tool_candidates:
+        if document_context:
+            messages[0]['content'] += (
+                "\nProduce the requested paper reading or summary now. Cover the paper's purpose, "
+                'method, key findings, limitations, and practical significance when those details '
+                'are present. Do not call tools and do not ask for titles, links, or file paths.'
+            )
+            if emit:
+                emit({'type':'plain'})
+                reply=llm.chat_stream(
+                    messages,
+                    max_tokens=2000,
+                    on_token=lambda piece:emit({'type':'token','text':piece}),
+                    cancel=cancel,
+                    model=model,
+                )
+            else:
+                reply=llm.chat_message(messages,max_tokens=2000,model=model)
+            answer=_save_assistant(str(reply.get('content','')).strip() or 'I could not produce a summary from the attached document.')
+        elif not forced and not tool_candidates:
             # Small talk / plain questions: one fast model call, no tool selection round-trips.
             messages[0]['content']+='\nNo tool is needed for this message. Reply directly and briefly in natural language. Never claim that you ran a tool or plugin, and never invent tool output.'
             max_tokens=128 if smalltalk else 700
