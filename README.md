@@ -57,7 +57,7 @@ Sign in to Tailscale on the iPhone and keep Sage's Tailscale Serve route active.
 
 ## Install on Kali Linux and start at boot
 
-The installer installs Sage's required Kali packages, including PDF extraction, plotting, engineering-property calculations, local PDF attachment handling, and speaker audio support. Phone speech recognition remains optional and uses the separate `faster-whisper` environment described below. Ollama provides the local language models.
+The installer installs Sage's required Kali packages, including PDF extraction, plotting, local PDF attachment handling, and speaker audio support. Engineering-property calculations work with Sage's built-in approximations; optional CoolProp support can improve them when available. Phone speech recognition remains optional and uses the separate `faster-whisper` environment described below. Ollama provides the local language models.
 
 1. Install Git, then install Ollama using its official Linux instructions:
    ```

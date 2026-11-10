@@ -20,7 +20,6 @@ sudo apt-get install -y \
   python3-venv \
   python3-pypdf \
   python3-matplotlib \
-  python3-coolprop \
   git \
   curl \
   poppler-utils \
