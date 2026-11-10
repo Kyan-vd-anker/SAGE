@@ -204,6 +204,8 @@ class Handler(BaseHTTPRequestHandler):
             if len(content) > 200_000:
                 raise ValueError(f'{name}: selected content is larger than 200 KB')
             sections.append(f'--- {name} ---\n{content}')
+        if documents and not sections:
+            raise ValueError('No supported document content was extracted. Select PDF, DOCX, TXT, Markdown, CSV, JSON, or TEX files.')
         return '\n\n'.join(sections)
     def client_is_allowed(self):
         try: address=ipaddress.ip_address(self.client_address[0])
