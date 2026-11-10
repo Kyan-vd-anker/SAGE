@@ -681,7 +681,9 @@ def respond(user_text,project_id=None,emit=None,cancel=None,computer_task_id=Non
         tool_candidates=tools.definitions()
     elif any(item.get('function',{}).get('name') in computer_tasks.PC_TOOL_NAMES for item in tool_candidates):
         computer_task_id=computer_tasks.create(user_text)
-    model=llm.model_for_request(user_text,use_tools=bool(forced or tool_candidates))
+    model=llm.REASONING_MODEL if document_context else llm.model_for_request(
+        user_text,use_tools=bool(forced or tool_candidates)
+    )
     _answer_model.set(model)
     try:
         if document_context:
