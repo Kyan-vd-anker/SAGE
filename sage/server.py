@@ -525,7 +525,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not config.SHORTCUT_TOKEN: return send_json(self,{'error':'iPhone Shortcut endpoint is disabled; configure SAGE_SHORTCUT_TOKEN'},503)
                 supplied=self.headers.get('Authorization','')
                 if not hmac.compare_digest(supplied,'Bearer '+config.SHORTCUT_TOKEN): return send_json(self,{'error':'iPhone Shortcut token is invalid'},401)
-            body=payload(self, limit=7_000_000 if path in ('/api/screen/describe','/api/studio/import','/api/import') else 1_000_000)
+            body=payload(self, limit=25_000_000 if path == '/api/import' else 7_000_000 if path in ('/api/screen/describe','/api/studio/import') else 1_000_000)
             handled,value=routes.post(path,body)
             if handled: return send_json(self,value)
             if path=='/api/system/screen':
