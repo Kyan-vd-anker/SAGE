@@ -29,6 +29,7 @@ WAKE_WORD = os.getenv("SAGE_WAKE_WORD", "sage")
 PASSWORD = os.getenv("SAGE_PASSWORD", "")  # dashboard login; empty = no login (set it in the ignored start-sage.local.bat)
 VOICE_STREAM_REPLIES = os.getenv("SAGE_VOICE_STREAM", "1").lower() in ("1", "true", "yes", "on")  # speaker talks while the model is still writing
 SPEAKER_ROOM = os.getenv("SAGE_SPEAKER_ROOM", "bedroom")  # the room the speaker is in (as named in SAGE_BLE_NODE_ROOMS)
+STUDIO_MODEL = os.getenv("SAGE_STUDIO_MODEL", "")  # model that reviews Studio text; empty = fast lane for documents, deep lane for LaTeX and sheets
 LOGIN_EXEMPT_IPS = {item.strip() for item in os.getenv("SAGE_LOGIN_EXEMPT_IPS", "").split(",") if item.strip()}  # devices that skip the login (e.g. wall display); empty by default
 HA_TOKEN = os.getenv("SAGE_HA_TOKEN", "")
 SHORTCUT_TOKEN = os.getenv("SAGE_SHORTCUT_TOKEN", "")

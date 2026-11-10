@@ -375,9 +375,13 @@ def complete_project(project_id):
         return
     from . import memory
     db.execute("UPDATE projects SET status='completed',next_action='' WHERE id=?", (project_id,))
+    db.execute('INSERT OR REPLACE INTO completed_projects(project_id,name,completed_at) VALUES(?,?,?)',
+               (project_id, rows[0]['name'], db.now()))
     done = db.rows("SELECT title,result_summary FROM tasks WHERE project_id=? AND status='done' ORDER BY finished_at", (project_id,))
     events.publish('project.completed', f"Project finished: {rows[0]['name']}", f'{len(done)} tasks done', 'success', {'project_id': project_id})
     memory.save(f"Completed project {rows[0]['name']}: " + '; '.join(d['title'] for d in done[:6]), 'project', 'project work', 0.8, importance=3, quiet=True)
+    from . import jobs
+    jobs.queue_project_paper(project_id, phase='final')
 
 
 # ------------------------------------------------------------------ planning (LLM)
@@ -413,7 +417,7 @@ def plan_prompt(goal, project=None):
     from . import memory
     notes = '; '.join(m['content'] for m in memory.relevant(goal, limit=5, track=False))
     return (f"Goal: {goal}\n{existing}\nWhat Sage knows about the user: {notes or 'nothing relevant'}\n\n"
-            "Rules: 4-10 tasks in the order they should be done. Tasks Sage can do on a computer (writing, research, code, calculations, design notes) "
+            "Rules: 5-10 tasks in the order they should be done. For projects that need evidence, include at least two concrete research or data-collection tasks that gather substantial information, compare sources, record measurements, or analyze files before the writing task. End with a synthesis/documentation task when appropriate. Tasks Sage can do on a computer (writing, research, code, calculations, design notes) "
             "get assignee sage; physical or personal actions (buying, soldering, printing, calling, testing on the bench) get assignee user and kind physical. "
             "Estimate minutes for Sage tasks realistically (5-30). Give every task one acceptance sentence. Use depends_on only when needed.\n"
             f"Schema:\n{PLAN_SCHEMA}")
@@ -579,7 +583,7 @@ Things Sage remembers about the user: {memories or 'nothing relevant'}'''
 
 
 def _finish(job, task, project, status, summary, deliverable, reason='', extra=None, acceptance=None, needs=''):
-    from . import memory
+    from . import jobs, memory
     directory = (config.WORKSPACE / 'projects' / str(project['id']) / 'tasks').resolve()
     root = (config.WORKSPACE / 'projects').resolve()
     directory.relative_to(root)
@@ -601,6 +605,11 @@ def _finish(job, task, project, status, summary, deliverable, reason='', extra=N
     if done:
         events.publish('task.done', f"Done: {task['title']}", summary[:240], 'success', {'task_id': task['id'], 'project_id': project['id'], 'artifact': str(artifact)})
         memory.save(f"Finished '{task['title']}' in {project['name']}: {summary[:200]}", 'project', 'project work', 0.7, importance=2, quiet=True)
+        counts = db.rows("SELECT COUNT(*) AS total, SUM(CASE WHEN status='done' THEN 1 ELSE 0 END) AS done FROM tasks WHERE project_id=?", (project['id'],))[0]
+        if counts['done'] == counts['total'] and counts['total']:
+            complete_project(project['id'])
+        elif counts['done'] and counts['done'] % 3 == 0:
+            jobs.queue_project_paper(project['id'], phase='progress')
     else:
         events.publish('task.blocked', f"Blocked: {task['title']}", reason[:240] or summary[:240], 'warning', {'task_id': task['id'], 'project_id': project['id']})
 
@@ -664,7 +673,9 @@ def run_task(job):
         found = research.search_with_config(task['title'] + '. ' + (task['description'] or ''))
         sources = found.get('sources', [])
         text = found.get('summary', '')
-        links = '\n'.join(f"- [{s.get('title', 'Source')}]({s.get('url', '')})" for s in sources)
+        links = '\n'.join(
+            f"- [{s.get('title', 'Source')}]({s.get('url', '')})\n  - Evidence excerpt: {s.get('excerpt', 'No excerpt recorded.')}"
+            for s in sources)
         if not text.strip():
             _finish(job, task, project, 'blocked', 'No usable research results.', 'The web search returned nothing usable.', reason='Web research returned nothing', extra=None)
             return

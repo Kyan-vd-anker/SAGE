@@ -1,0 +1,11 @@
+Command: cmake -G Ninja -DPYTHON_DEPS_CHECKED=1 -DPYTHON=C:\Espressif\python_env\idf5.5_py3.11_env\Scripts\python.exe -DESP_PLATFORM=1 -DCCACHE_ENABLE=0 C:\Github Sage\SAGE\firmware\esp32-wearable
+-- IDF_TARGET is not set, guessed 'esp32' from sdkconfig 'C:/Github Sage/SAGE/firmware/esp32-wearable/sdkconfig.defaults'
+-- Found Git: C:/Program Files/Git/cmd/git.exe (found version "2.52.0.windows.1")
+-- Component directory C:/Espressif/frameworks/esp-idf-v5.5.6/components/esp_blockdev does not contain a CMakeLists.txt file. No component will be added
+-- Minimal build - OFF
+-- The C compiler identification is unknown
+-- The CXX compiler identification is unknown
+-- The ASM compiler identification is unknown
+-- Found assembler: xtensa-esp32-elf-gcc
+-- Warning: Did not find file Compiler/-ASM
+-- Configuring incomplete, errors occurred!

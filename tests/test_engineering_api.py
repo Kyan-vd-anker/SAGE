@@ -8,7 +8,7 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 from unittest.mock import patch
 
-from sage import config, db
+from sage import config, db, planner
 from sage.server import Handler
 
 
@@ -25,6 +25,16 @@ class EngineeringApiTests(unittest.TestCase):
 
     def close_server(self):
         self.server.shutdown(); self.server.server_close(); self.thread.join(timeout=2)
+
+    def test_completed_projects_are_compact_until_opened(self):
+        pid=db.execute("INSERT INTO projects(name,description,status,created_at) VALUES(?,?,?,?)",('Finished pump','Completed study','active',db.now()))
+        db.execute("INSERT INTO tasks(project_id,title,status,created_at) VALUES(?,?,?,?)",(pid,'Analyze results','done',db.now()))
+        planner.complete_project(pid)
+        compact=self.request('/api/completed-projects')
+        self.assertEqual([(row['project_id'],row['name']) for row in compact],[(pid,'Finished pump')])
+        self.assertNotIn('tasks',compact[0])
+        detail=self.request(f'/api/completed-projects/{pid}')
+        self.assertEqual(detail['tasks'][0]['title'],'Analyze results')
 
     def request(self,path,data=None,content_type='application/json'):
         body=data if isinstance(data,bytes) else json.dumps(data).encode() if data is not None else None

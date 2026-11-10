@@ -1,0 +1,2 @@
+source C:/Github Sage/SAGE/firmware/esp32-wearable/build/bootloader/gdbinit/symbols
+source C:/Github Sage/SAGE/firmware/esp32-wearable/build/bootloader/gdbinit/connect

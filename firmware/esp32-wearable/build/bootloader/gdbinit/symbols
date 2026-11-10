@@ -1,0 +1,9 @@
+
+
+# Load bootloader symbols
+set confirm off
+    # Bootloader elf was not found
+set confirm on
+
+# Load application symbols
+file C:/Github Sage/SAGE/firmware/esp32-wearable/build/bootloader/bootloader.elf

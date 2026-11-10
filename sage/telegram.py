@@ -60,9 +60,10 @@ def _save_setting(key, value):
 
 def _prefs():
     try:
-        return json.loads(_setting('telegram_preferences', '{}'))
+        value = json.loads(_setting('telegram_preferences', '{}'))
+        return {**{'quiet_start': '22:00', 'quiet_end': '08:00'}, **value} if isinstance(value, dict) else {'quiet_start': '22:00', 'quiet_end': '08:00'}
     except (ValueError, TypeError):
-        return {}
+        return {'quiet_start': '22:00', 'quiet_end': '08:00'}
 
 
 def _enabled(category):

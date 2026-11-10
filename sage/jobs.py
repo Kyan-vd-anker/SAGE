@@ -4,8 +4,10 @@ import json
 import re
 import sys
 import subprocess
+import math
 from datetime import datetime
 from pathlib import Path
+from xml.sax.saxutils import escape
 from . import engineering
 from datetime import datetime, timedelta, timezone
 from . import db, llm, config, memory, research, events
@@ -30,6 +32,26 @@ def create(title, prompt, kind='planning', context=''):
     return db.execute('INSERT INTO jobs(title,prompt,kind,status,checkpoint,result,created_at,updated_at) VALUES(?,?,?,\'queued\',?,?,?,?)',
                       (title, prompt, kind, 'Waiting for idle worker', context, stamp, stamp))
 
+
+def queue_project_paper(project_id, phase='progress'):
+    """Queue a readable project paper from the evidence collected so far."""
+    project = db.rows('SELECT id,name,status FROM projects WHERE id=?', (int(project_id),))
+    if not project:
+        raise ValueError('Project not found')
+    project = project[0]
+    if phase == 'final' and project['status'] != 'completed':
+        return None
+    done = db.rows("SELECT COUNT(*) AS n FROM tasks WHERE project_id=? AND status='done'", (project_id,))[0]['n']
+    if phase == 'progress' and not done:
+        return None
+    label = 'final paper' if phase == 'final' else f'progress paper after {done} completed tasks'
+    title = f"Project paper: {project['name']} ({label})"
+    active = db.rows("SELECT id FROM jobs WHERE kind='project_paper' AND title=? AND status IN ('queued','running')", (title,))
+    if active:
+        return active[0]['id']
+    context = json.dumps({'project_id': int(project_id), 'phase': phase, 'completed_tasks': done}, ensure_ascii=False)
+    return create(title, f"Write the {label} for project '{project['name']}'.", 'project_paper', context)
+
 def set_status(job_id, status):
     db.execute('UPDATE jobs SET status=?,updated_at=? WHERE id=?', (status,db.now(),job_id))
 
@@ -37,6 +59,13 @@ def is_idle():
     return time.time() - _last_interaction >= 30
 
 def decode_json(text):
+    text = str(text or '').lstrip('\ufeff')
+    # Local models sometimes use Python-style triple-quoted strings inside an
+    # otherwise JSON-shaped response. Convert those values before scanning for
+    # balanced braces so Markdown and newlines remain valid JSON string data.
+    text = re.sub(r'("""|\'\'\')(.*?)\1',
+                  lambda match: json.dumps(match.group(2)),
+                  text, flags=re.DOTALL)
     start=text.find('{')
     if start<0: raise ValueError('Model returned no structured reflection')
     depth=0; quoted=False; escaped=False; end=None
@@ -246,6 +275,141 @@ def run_session_summary(job):
     db.execute("UPDATE session_summaries SET content=?,status='pending_review',updated_at=? WHERE id=?",(summary,db.now(),sid))
     db.execute('UPDATE jobs SET status=?,result=?,checkpoint=?,updated_at=? WHERE id=?',('completed','Draft ready for your approval.','Waiting for user review before saving',db.now(),job['id']))
 
+
+def _measurement_plot(project_id, directory):
+    rows = db.rows(
+        'SELECT v.field_name,v.value,v.unit,r.created_at FROM measurement_values v '
+        'JOIN measurement_runs r ON r.id=v.run_id '
+        'JOIN measurement_templates t ON t.id=r.template_id '
+        'WHERE t.project_id=? ORDER BY r.id DESC,v.id LIMIT 40', (project_id,))
+    points = []
+    for row in rows:
+        try:
+            value = float(str(row['value']).replace(',', '.'))
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(value):
+            points.append((str(row['field_name'])[:24], value, str(row['unit'] or '')[:12]))
+    if not points:
+        return None
+    width, height, left, bottom = 760, 360, 70, 70
+    maximum = max(abs(value) for _, value, _ in points) or 1.0
+    bar_width = max(8, min(42, (width - left - 30) / len(points) - 8))
+    bars = []
+    labels = []
+    for index, (name, value, unit) in enumerate(reversed(points)):
+        x = left + 20 + index * ((width - left - 30) / len(points))
+        bar_height = abs(value) / maximum * (height - bottom - 30)
+        y = height - bottom - bar_height if value >= 0 else height - bottom
+        bars.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_width:.1f}" height="{bar_height:.1f}" fill="#4f86c6"/>')
+        labels.append(f'<text x="{x + bar_width / 2:.1f}" y="{height - 42}" text-anchor="middle" font-size="11">{escape(name)}</text>')
+        labels.append(f'<text x="{x + bar_width / 2:.1f}" y="{max(18, y - 5):.1f}" text-anchor="middle" font-size="10">{value:g} {escape(unit)}</text>')
+    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">'
+           f'<rect width="100%" height="100%" fill="white"/><text x="{left}" y="24" font-size="16">Recorded measurements</text>'
+           f'<line x1="{left}" y1="{height-bottom}" x2="{width-20}" y2="{height-bottom}" stroke="#333"/>'
+           + ''.join(bars + labels) + '</svg>\n')
+    path = directory / 'measurements.svg'
+    path.write_text(svg, encoding='utf-8')
+    return path.name
+
+
+def _project_paper_evidence(project_id):
+    """Collect recorded project evidence, including the full task artifacts."""
+    project = db.rows('SELECT * FROM projects WHERE id=?', (project_id,))[0]
+    tasks = db.rows('SELECT * FROM tasks WHERE project_id=? ORDER BY sort_order,id', (project_id,))
+    evidence = {
+        'project': project,
+        'tasks': [{key: task.get(key) for key in ('id', 'title', 'description', 'status', 'kind', 'assignee',
+                                                  'acceptance', 'result_summary', 'finished_at', 'milestone')}
+                  for task in tasks],
+        'workshop_entries': db.rows('SELECT * FROM workshop_entries WHERE project_id=? ORDER BY id', (project_id,)),
+        'decisions': db.rows('SELECT * FROM decision_log WHERE project_id=? ORDER BY id', (project_id,)),
+        'test_results': db.rows(
+            'SELECT d.title,d.kind,d.body,r.outcome,r.notes,r.measurements,r.created_at '
+            'FROM engineering_doc_results r JOIN engineering_docs d ON d.id=r.doc_id '
+            'WHERE d.project_id=? ORDER BY r.id', (project_id,)),
+        'engineering_documents': db.rows(
+            "SELECT id,kind,title,body,metadata_json,created_at FROM engineering_docs "
+            "WHERE project_id=? AND kind!='project_paper' ORDER BY id", (project_id,)),
+        'code_projects': db.rows('SELECT * FROM code_projects WHERE project_id=? ORDER BY id', (project_id,)),
+        'jobs': db.rows(
+            "SELECT id,title,kind,status,checkpoint,result,created_at,updated_at FROM jobs "
+            "WHERE kind IN ('research','project_task','code_project','session_summary') "
+            "AND (result LIKE ? OR prompt LIKE ?) ORDER BY id", (f'%\"project_id\": {project_id}%', f'%{project["name"]}%')),
+    }
+    root = (config.WORKSPACE / 'projects' / str(project_id)).resolve()
+    if root.is_dir():
+        artifacts = []
+        for path in sorted(root.rglob('*')):
+            if path.is_file() and path.suffix.lower() in ('.md', '.txt', '.csv', '.json'):
+                try:
+                    artifacts.append({'path': str(path.relative_to(root)), 'content': path.read_text(encoding='utf-8', errors='replace')})
+                except OSError:
+                    continue
+        evidence['task_artifacts'] = artifacts
+    return evidence
+
+
+def run_project_paper(job):
+    try:
+        context = json.loads(job.get('result', '') or '{}')
+    except (TypeError, ValueError):
+        context = {}
+    project_id = context.get('project_id')
+    project = db.rows('SELECT * FROM projects WHERE id=?', (project_id,))
+    if not project:
+        raise ValueError('The linked project could not be found.')
+    project = project[0]
+    evidence = _project_paper_evidence(project_id)
+    workspace = config.WORKSPACE.resolve()
+    directory = (workspace / 'engineering' / 'documents' / ('project_paper_' + str(job['id']))).resolve()
+    directory.relative_to(workspace)
+    directory.mkdir(parents=True, exist_ok=True)
+    plot = _measurement_plot(project_id, directory)
+    prompt = ('Write a serious, multiple-page technical project paper in Markdown, approximately 2,500-4,000 words. '
+              'Use this exact structure: Abstract; 1. Introduction; 2. Research questions and method; 3. Project '
+              'design and approach; 4. Work completed; 5. Results and recorded data; 6. Decisions and trade-offs; '
+              '7. Limitations, uncertainty, and safety; 8. Discussion; 9. Conclusions; 10. Recommendations; '
+              'Appendix A: complete evidence register. Use tables where useful and cite the source record by task, '
+              'document, workshop entry, or file path. Incorporate all supplied evidence, not just a summary. '
+              'Separate recorded facts from assumptions and never claim unrecorded tests, measurements, or physical '
+              'work. Include the exact image link measurements.svg if a plot is listed in the supplied context. '
+              'If evidence is incomplete, say so explicitly rather than filling gaps.\n\nEvidence:\n' +
+              json.dumps(evidence, ensure_ascii=False, default=str)[:90000])
+    body = llm.chat(
+        [{'role': 'system', 'content': 'You are Sage Engineering, writing a careful project paper from recorded evidence.'},
+         {'role': 'user', 'content': prompt}],
+        timeout=300, max_tokens=5000, background=True)
+    if not str(body).strip():
+        body = '## Abstract\n\nA paper could not be drafted because the local model returned no content.\n\n## 4. Work completed\n\n' + '\n'.join(
+            f"- {item['title']}: {item.get('result_summary') or item['status']}" for item in evidence['tasks'])
+    if plot:
+        body += f'\n\n## Recorded measurements\n\n![Recorded measurements]({plot})\n'
+    path = directory / 'paper.md'
+    path.write_text(f'# {project["name"]}\n\n{body.strip()}\n', encoding='utf-8')
+    from . import studio
+    docx_path = directory / 'paper.docx'
+    docx_path.write_bytes(studio.export_docx(body))
+    vault_name = re.sub(r'[^\w -]', '', project['name']).strip()[:100] or f'Project {project_id}'
+    vault_path = (config.VAULT / f'{vault_name} Paper {job["id"]}.md').resolve()
+    vault_path.relative_to(config.VAULT.resolve())
+    vault_body = path.read_text(encoding='utf-8')
+    if plot:
+        vault_plot = config.VAULT / f'{vault_name} Paper {job["id"]} measurements.svg'
+        vault_plot.write_text((directory / plot).read_text(encoding='utf-8'), encoding='utf-8')
+        vault_body = vault_body.replace(f']({plot})', f']({vault_plot.name})')
+    vault_path.write_text(vault_body, encoding='utf-8')
+    doc_id = db.execute(
+        'INSERT INTO engineering_docs(project_id,kind,title,prompt,body,metadata_json,status,file_path,created_at) VALUES(?,?,?,?,?,?,\'ready\',?,?)',
+        (project_id, 'project_paper', job['title'][:200], job['prompt'], body,
+         json.dumps({'phase': context.get('phase'), 'plot': plot, 'vault_path': str(vault_path),
+                     'docx_path': str(docx_path), 'evidence_sections': list(evidence)}, ensure_ascii=False),
+         str(path), db.now()))
+    db.execute('UPDATE jobs SET status=?,result=?,checkpoint=?,updated_at=? WHERE id=?',
+               ('completed', json.dumps({'document_id': doc_id, 'file_path': str(path), 'docx_path': str(docx_path),
+                                        'vault_path': str(vault_path), 'plot': plot}, ensure_ascii=False),
+                'Saved project paper and supporting plots', db.now(), job['id']))
+
 def queue_project_task():
     """Queue the next planned task. Order, autopilot and the working window are handled by planner."""
     from . import planner
@@ -359,6 +523,8 @@ def _run_job(job):
             run_code_project(job); return
         if job['kind']=='session_summary':
             run_session_summary(job); return
+        if job['kind']=='project_paper':
+            run_project_paper(job); return
         if job['kind']=='project_task':
             run_project_task(job); return
         if job['kind']=='project_plan':

@@ -1,0 +1,69 @@
+/* Sage Studio */
+#page-studio{max-width:none}
+#studioBar,#studioBar2{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px}
+#studioBar select,#studioBar input,#studioBar2 select,#studioBar2 input[type=number]{padding:7px 9px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font:inherit}
+#studioBar button,#studioBar2 button,#sheetBar button,#studioEmpty button{padding:7px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font:inherit;cursor:pointer}
+#studioBar button:hover,#studioBar2 button:hover,#sheetBar button:hover{border-color:var(--muted)}
+#studioBar button:disabled,#studioBar select:disabled,#studioBar input:disabled{opacity:.5;cursor:default}
+#studioTitle{flex:1;min-width:140px}
+#studioEvery{width:56px}
+#studioBody{display:grid;grid-template-columns:minmax(0,1fr) 310px;gap:14px;align-items:start}
+@media(max-width:900px){#studioBody{grid-template-columns:1fr}}
+#studioMain{min-width:0}
+#studioEmpty{padding:40px;text-align:center;border:1px dashed var(--border);border-radius:var(--radius,12px)}
+#studioEmpty.hidden,#studioText.hidden,#studioSheet.hidden,#studioPreview.hidden{display:none}
+
+/* text editor: a transparent textarea over a backdrop that paints the highlighted lines */
+#studioText{display:flex;height:min(62vh,640px);border:1px solid var(--border);border-radius:var(--radius,12px);background:var(--surface);overflow:hidden}
+#studioGutter{box-sizing:border-box;min-width:46px;padding:12px 8px;overflow:hidden;text-align:right;user-select:none;color:var(--muted);border-right:1px solid var(--border);font:13px/20px var(--mono,ui-monospace,Consolas,monospace)}
+#studioText.wrap #studioGutter{display:none}
+.gl{height:20px}
+.gl.n-info{color:var(--thinking,#5492ff);font-weight:700}.gl.n-warn{color:var(--alert,#e6a23c);font-weight:700}.gl.n-error{color:var(--error,#f46868);font-weight:700}
+.edWrap{position:relative;flex:1;min-width:0}
+.ed{position:absolute;inset:0;box-sizing:border-box;margin:0;padding:12px;border:0;font:13px/20px var(--mono,ui-monospace,Consolas,monospace);white-space:pre;overflow-x:auto;overflow-y:scroll;tab-size:4}
+#studioText.wrap .ed{font:15px/24px system-ui,-apple-system,Segoe UI,sans-serif;white-space:pre-wrap;overflow-wrap:anywhere;overflow-x:hidden}
+#studioBack{pointer-events:none;color:transparent;overflow-x:hidden}
+#studioArea{background:transparent;color:var(--text);resize:none;outline:none}
+.bl{min-height:1em}
+.bl.n-info{background:color-mix(in srgb,var(--thinking,#5492ff) 16%,transparent)}
+.bl.n-warn{background:color-mix(in srgb,var(--alert,#e6a23c) 22%,transparent)}
+.bl.n-error{background:color-mix(in srgb,var(--error,#f46868) 24%,transparent)}
+
+/* notes */
+#studioNotes{position:sticky;top:8px;max-height:calc(100vh - 120px);overflow:auto;padding:12px;border:1px solid var(--border);border-radius:var(--radius,12px);background:var(--surface)}
+#studioNotes h3{margin:0 0 6px;font-size:14px;letter-spacing:.06em}
+#studioCount{display:inline-block;min-width:18px;padding:0 6px;border-radius:9px;background:var(--border);font-size:12px;text-align:center}
+#studioCount:empty{display:none}
+.note{margin:8px 0;padding:8px 10px;border:1px solid var(--border);border-left-width:4px;border-radius:8px}
+.note.n-info{border-left-color:var(--thinking,#5492ff)}.note.n-warn{border-left-color:var(--alert,#e6a23c)}.note.n-error{border-left-color:var(--error,#f46868)}
+.note .nh{display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--muted)}
+.note .nh b{color:var(--text)}
+.note p{margin:4px 0;font-size:14px}
+.note code{display:block;margin:4px 0;padding:4px 6px;border-radius:6px;background:var(--border);font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere}
+.note .na{display:flex;gap:6px;margin-top:4px}
+.note .na button{padding:3px 9px;border:1px solid var(--border);border-radius:6px;background:transparent;color:var(--text);font:12px inherit;cursor:pointer}
+
+/* sheet */
+#sheetBar{display:flex;gap:8px;align-items:center;margin-bottom:6px}
+#sheetRef{min-width:44px;text-align:center}
+#sheetInput{flex:1;padding:7px 9px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font:13px var(--mono,ui-monospace,Consolas,monospace)}
+#sheetScroll{max-height:min(62vh,640px);overflow:auto;border:1px solid var(--border);border-radius:var(--radius,12px);background:var(--surface);outline:none}
+#sheetScroll:focus-visible{border-color:var(--thinking,#5492ff)}
+#sheetGrid{border-collapse:collapse;font:13px var(--mono,ui-monospace,Consolas,monospace)}
+#sheetGrid th{position:sticky;top:0;z-index:1;padding:3px 8px;background:var(--border);color:var(--muted);font-weight:600;user-select:none}
+#sheetGrid tr>th:first-child{position:sticky;left:0;z-index:2}
+#sheetGrid td{min-width:84px;max-width:240px;height:24px;padding:2px 8px;border:1px solid var(--border);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:cell}
+#sheetGrid td.num{text-align:right}
+#sheetGrid td.err{color:var(--error,#f46868)}
+#sheetGrid td.sel{outline:2px solid var(--thinking,#5492ff);outline-offset:-2px}
+#sheetGrid td.n-info{background:color-mix(in srgb,var(--thinking,#5492ff) 16%,transparent)}
+#sheetGrid td.n-warn{background:color-mix(in srgb,var(--alert,#e6a23c) 22%,transparent)}
+#sheetGrid td.n-error{background:color-mix(in srgb,var(--error,#f46868) 24%,transparent)}
+
+/* previews */
+#studioPreview{margin-top:12px;height:420px;overflow:auto;border:1px solid var(--border);border-radius:var(--radius,12px);background:var(--surface)}
+#studioPreview iframe{width:100%;height:100%;border:0}
+.docPreview{max-width:780px;padding:16px 24px;line-height:1.55}
+.docPreview h1,.docPreview h2,.docPreview h3{margin:1em 0 .4em}
+.docPreview pre,.docPreview code{background:var(--border);border-radius:6px}
+.docPreview pre{padding:10px;overflow:auto}

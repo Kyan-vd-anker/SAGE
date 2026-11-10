@@ -1,0 +1,31 @@
+menu "Sage wearable"
+
+config SAGE_WEARABLE_BUTTON_GPIO
+    int "Push-to-talk button GPIO"
+    range 0 39
+    default 0
+    help
+        GPIO0 is the usual BOOT button on ESP32-WROOM development boards.
+
+config SAGE_WEARABLE_OLED_SDA
+    int "OLED I2C SDA GPIO"
+    range 0 39
+    default 21
+
+config SAGE_WEARABLE_OLED_SCL
+    int "OLED I2C SCL GPIO"
+    range 0 39
+    default 22
+
+config SAGE_WEARABLE_OLED_ADDRESS
+    hex "OLED I2C address"
+    range 0x03 0x77
+    default 0x3c
+
+config SAGE_WEARABLE_AP_PASSWORD
+    string "Setup access-point password"
+    default "sage-setup"
+    help
+        Use at least eight characters. Change this before deploying the wearable.
+
+endmenu

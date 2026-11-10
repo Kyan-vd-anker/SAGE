@@ -1,0 +1,6 @@
+source "C:/Espressif/frameworks/esp-idf-v5.5.6/components/bootloader/Kconfig.projbuild"
+source "C:/Espressif/frameworks/esp-idf-v5.5.6/components/esp_app_format/Kconfig.projbuild"
+source "C:/Espressif/frameworks/esp-idf-v5.5.6/components/esp_rom/Kconfig.projbuild"
+source "C:/Espressif/frameworks/esp-idf-v5.5.6/components/esptool_py/Kconfig.projbuild"
+source "C:/Espressif/frameworks/esp-idf-v5.5.6/components/partition_table/Kconfig.projbuild"
+source "C:/Github Sage/SAGE/firmware/esp32-wearable/main/Kconfig.projbuild"

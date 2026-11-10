@@ -203,6 +203,21 @@ class AgentToolTests(unittest.TestCase):
         self.assertNotIn(entries[0][1],selected)
         self.assertNotIn(entries[1][1],selected)
 
+    def test_speaker_context_keeps_recent_turns_for_follow_up_questions(self):
+        entries=[
+            ('user','I am comparing two underwater cameras.'),
+            ('assistant','The first camera has better low-light performance.'),
+            ('user','Which one has the wider lens?'),
+            ('assistant','The second camera has the wider lens.'),
+        ]
+        for role,content in entries:
+            db.execute('INSERT INTO messages(role,content,created_at) VALUES(?,?,?)',(role,content,db.now()))
+
+        history,memories=agent._relevant_context('And which one is cheaper?',limit=8,recent_limit=6)
+
+        self.assertEqual(memories,[])
+        self.assertEqual([item['content'] for item in history], [content for _,content in entries])
+
     def test_pinned_context_is_used_first_and_limited_to_three(self):
         first=db.execute('INSERT INTO messages(role,content,created_at) VALUES(?,?,?)',('user','Unrelated but important project detail.',db.now()))
         second=db.execute('INSERT INTO messages(role,content,created_at) VALUES(?,?,?)',('assistant','Another pinned engineering constraint.',db.now()))

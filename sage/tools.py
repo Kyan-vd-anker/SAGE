@@ -55,6 +55,7 @@ BUILTINS = [
     ("create_measurement_template", "Create a repeatable measurement template for a project.", {"type":"object","properties":{"title":{"type":"string"},"fields":{"type":"array","items":{"type":"object"}},"project_id":{"type":"integer"}},"required":["title","fields"]}),
     ("record_engineering_decision", "Record a chosen engineering option, alternatives, rationale, and optional project link.", {"type":"object","properties":{"title":{"type":"string"},"decision":{"type":"string"},"alternatives":{"type":"string"},"rationale":{"type":"string"},"project_id":{"type":"integer"}},"required":["title","decision"]}),
     ("draft_session_summary", "Queue an evidence-based work-session summary for user review. It is not saved to Obsidian until approved.", {"type":"object","properties":{"project_id":{"type":"integer"},"title":{"type":"string"}}}),
+    ("create_project_paper", "Create a readable Markdown paper from a project's recorded tasks, decisions, workshop notes, tests, and measurements. Includes an SVG measurement plot when numeric measurements exist.", {"type":"object","properties":{"project_id":{"type":"integer"},"phase":{"type":"string","enum":["progress","final"]}},"required":["project_id"]}),
     ("get_project_brief", "Build a concise evidence-based brief for a project: next action, open and overdue tasks, blockers, recent verification, decisions, and BOM shortages.", {"type":"object","properties":{"project_id":{"type":"integer"}},"required":["project_id"]}),
     ("search_related_knowledge", "Find the most relevant related memories, workshop records, failures, decisions, engineering reports, and notes using local keyword relevance ranking.", {"type":"object","properties":{"query":{"type":"string"},"project_id":{"type":"integer"}},"required":["query"]}),
     ("check_task_dependencies", "Check which project tasks are ready, waiting on dependencies, or have invalid dependency references.", {"type":"object","properties":{"project_id":{"type":"integer"}},"required":["project_id"]}),
@@ -654,6 +655,14 @@ def execute(name,args,approved=False,cancel=None):
         jid=jobs.create(title,prompt,'session_summary',json.dumps(context))
         db.execute('UPDATE session_summaries SET job_id=? WHERE id=?',(jid,sid))
         return _audit(name,args,{'job_id':jid,'summary_id':sid,'status':'queued_for_review'})
+    if name=='create_project_paper':
+        pid=int(args['project_id'])
+        if not db.rows('SELECT id FROM projects WHERE id=?',(pid,)):raise ValueError('Project not found')
+        phase=str(args.get('phase') or 'progress').lower()
+        if phase not in ('progress','final'):raise ValueError('Phase must be progress or final')
+        jid=jobs.queue_project_paper(pid,phase=phase)
+        if not jid:raise ValueError('A final paper can only be created after the project is completed')
+        return _audit(name,args,{'job_id':jid,'project_id':pid,'phase':phase,'status':'queued'})
     if name=='get_project_brief':
         pid=int(args['project_id']);p=db.rows('SELECT * FROM projects WHERE id=?',(pid,))
         if not p:raise ValueError('Project not found')

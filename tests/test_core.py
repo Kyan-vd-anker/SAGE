@@ -1,10 +1,11 @@
 import tempfile
 import unittest
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from sage import config, db, plugins, jobs, scheduler
+from sage import config, db, plugins, jobs, scheduler, telegram
 
 class CoreTests(unittest.TestCase):
     def setUp(self):
@@ -18,6 +19,47 @@ class CoreTests(unittest.TestCase):
     def test_memory_persists_with_provenance(self):
         mid=db.execute('INSERT INTO memories(content,kind,source,confidence,created_at,updated_at) VALUES(?,?,?,?,?,?)',('Use concise answers','preference','user',1,db.now(),db.now()))
         self.assertEqual(db.rows('SELECT content,source FROM memories WHERE id=?',(mid,))[0],{'content':'Use concise answers','source':'user'})
+
+    def test_decode_json_recovers_triple_quoted_markdown_deliverable(self):
+        raw='''```json
+{"status":"complete","summary":"Research complete","deliverable": """
+# Findings
+
+The result contains {braces} and multiple lines.
+""","acceptance":[]}
+```'''
+        result=jobs.decode_json(raw)
+        self.assertEqual(result['status'],'complete')
+        self.assertIn('{braces}',result['deliverable'])
+
+    def test_telegram_defaults_to_night_quiet_hours(self):
+        self.assertEqual(telegram._prefs()['quiet_start'],'22:00')
+        self.assertEqual(telegram._prefs()['quiet_end'],'08:00')
+        with patch('sage.telegram.dt.datetime') as clock:
+            clock.now.return_value=datetime(2026, 11, 9, 23, 0, tzinfo=timezone.utc)
+            self.assertTrue(telegram._quiet_now())
+    def test_completed_project_queues_paper_with_measurement_plot(self):
+        from sage import jobs, planner
+        pid=db.execute('INSERT INTO projects(name,description,status,created_at) VALUES(?,?,?,?)',('Pump study','Compare pump options','active',db.now()))
+        tid=db.execute("INSERT INTO tasks(project_id,title,status,result_summary,finished_at,created_at) VALUES(?,?,\'done\',?,?,?)",(pid,'Compare options','Comparison complete',db.now(),db.now()))
+        template=db.execute('INSERT INTO measurement_templates(project_id,title,fields_json,created_at) VALUES(?,?,?,?)',(pid,'Flow',json.dumps([{'name':'Flow','unit':'L/min'}]),db.now()))
+        run=db.execute('INSERT INTO measurement_runs(template_id,project_id,created_at) VALUES(?,?,?)',(template,pid,db.now()))
+        db.execute('INSERT INTO measurement_values(run_id,field_name,value,unit,created_at) VALUES(?,?,?,?,?)',(run,'Flow','12.5','L/min',db.now()))
+
+        planner.complete_project(pid)
+        queued=db.rows("SELECT * FROM jobs WHERE kind='project_paper' AND status='queued'")
+        self.assertEqual(len(queued),1)
+        with patch('sage.jobs.llm.chat',return_value='## Abstract\nThe recorded comparison is summarized here.'):
+            jobs.run_project_paper(queued[0])
+
+        document=db.rows("SELECT kind,file_path,metadata_json FROM engineering_docs WHERE project_id=?",(pid,))[0]
+        self.assertEqual(document['kind'],'project_paper')
+        self.assertTrue(Path(document['file_path']).exists())
+        self.assertTrue((Path(document['file_path']).parent/'measurements.svg').exists())
+        self.assertTrue((Path(document['file_path']).parent/'paper.docx').exists())
+        vault_path=Path(json.loads(document['metadata_json'])['vault_path'])
+        self.assertTrue(vault_path.exists())
+        self.assertIn(vault_path.stem + ' measurements.svg', [path.name for path in vault_path.parent.glob('*.svg')])
 
     def test_morning_brief_default_moves_to_0830_and_migrates_existing_default(self):
         db.execute(

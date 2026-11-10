@@ -656,7 +656,8 @@ def converse(text, lang, who, origin='speaker', emit=None):
             before = _max_approval_id()
             try:
                 with trust.source('voice'):
-                    answer = agent.respond(text, emit=emit) if emit else agent.respond(text)
+                    answer = (agent.respond(text, emit=emit, conversation_source=origin)
+                              if emit else agent.respond(text, conversation_source=origin))
             finally:
                 jobs.touch()
             waiting = _new_approvals(before)

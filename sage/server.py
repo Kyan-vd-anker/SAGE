@@ -368,7 +368,7 @@ class Handler(BaseHTTPRequestHandler):
             status=params.get('status',['all'])[0].strip() or 'all'
             return send_json(self,memory.list_memories(status=status,query=query,limit=2000))
         if path=='/api/projects':
-            projects=db.rows('SELECT * FROM projects ORDER BY id DESC')
+            projects=db.rows("SELECT * FROM projects WHERE status!='completed' ORDER BY id DESC")
             project_task_jobs=db.rows("SELECT id,status,result FROM jobs WHERE kind='project_task' ORDER BY id DESC")
             work_by_task={}
             for job in project_task_jobs:
@@ -380,6 +380,18 @@ class Handler(BaseHTTPRequestHandler):
                 p['tasks']=db.rows('SELECT * FROM tasks WHERE project_id=? ORDER BY id',(p['id'],))
                 for task in p['tasks']: task['ai_work']=work_by_task.get(task['id'])
             return send_json(self,projects)
+        if path=='/api/completed-projects':
+            return send_json(self, db.rows('SELECT id,project_id,name,completed_at FROM completed_projects ORDER BY completed_at DESC,id DESC'))
+        m=re.fullmatch(r'/api/completed-projects/(\d+)',path)
+        if m:
+            pid=int(m.group(1))
+            archived=db.rows('SELECT id,project_id,name,completed_at FROM completed_projects WHERE project_id=?',(pid,))
+            if not archived:return send_json(self,{'error':'Completed project not found'},404)
+            detail=archived[0]
+            detail['project']=db.rows('SELECT * FROM projects WHERE id=?',(pid,))[0]
+            detail['tasks']=db.rows('SELECT * FROM tasks WHERE project_id=? ORDER BY sort_order,id',(pid,))
+            detail['documents']=db.rows("SELECT id,kind,title,file_path,created_at FROM engineering_docs WHERE project_id=? ORDER BY id DESC",(pid,))
+            return send_json(self,detail)
         if path.startswith('/api/projects/') and path.endswith('/parts-status'):
             try: pid=int(path.split('/')[-2])
             except ValueError:return send_json(self,{'error':'Invalid project id'},400)
@@ -513,7 +525,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not config.SHORTCUT_TOKEN: return send_json(self,{'error':'iPhone Shortcut endpoint is disabled; configure SAGE_SHORTCUT_TOKEN'},503)
                 supplied=self.headers.get('Authorization','')
                 if not hmac.compare_digest(supplied,'Bearer '+config.SHORTCUT_TOKEN): return send_json(self,{'error':'iPhone Shortcut token is invalid'},401)
-            body=payload(self, limit=7_000_000 if path=='/api/screen/describe' else 1_000_000)
+            body=payload(self, limit=7_000_000 if path in ('/api/screen/describe','/api/studio/import') else 1_000_000)
             handled,value=routes.post(path,body)
             if handled: return send_json(self,value)
             if path=='/api/system/screen':

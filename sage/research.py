@@ -91,4 +91,5 @@ def search_with_config(query):
     if not sources: return {'query':query,'sources':[],'summary':'No usable search results were returned.'}
     prompt='Synthesize only evidence in the numbered source excerpts below. Cite every sourced claim using [1], [2], etc. If evidence is weak, say so. Return a concise summary and key findings. Do not invent sources.\n\n'+ '\n\n'.join(f"[{i}] {s['title']} — {s['url']}\n{s['excerpt']}" for i,s in enumerate(sources,1))
     summary=llm.chat([{'role':'system','content':'You are a careful research assistant. In at most 180 words, synthesize only the supplied sources, cite each claim with its matching [n] label, distinguish evidence from uncertainty, and mention source disagreement. Do not invent sources.'},{'role':'user','content':f'Research question: {query}\n\n{prompt}'}],timeout=180,max_tokens=180,background=True)
-    return {'query':query,'summary':summary,'sources':[{'title':s['title'],'url':s['url']} for s in sources]}
+    return {'query':query,'summary':summary,'sources':[
+        {'title':s['title'],'url':s['url'],'snippet':s['snippet'],'excerpt':s['excerpt']} for s in sources]}

@@ -52,6 +52,7 @@ def init():
         CREATE TABLE IF NOT EXISTS memories(id INTEGER PRIMARY KEY, content TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'preference', source TEXT NOT NULL DEFAULT 'user', confidence REAL NOT NULL DEFAULT 1.0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS memory_embeddings(memory_id INTEGER PRIMARY KEY, model TEXT NOT NULL, content_hash TEXT NOT NULL, vector_json TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(memory_id) REFERENCES memories(id) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS projects(id INTEGER PRIMARY KEY, name TEXT NOT NULL, description TEXT DEFAULT '', status TEXT DEFAULT 'active', priority TEXT DEFAULT 'medium', due_date TEXT, next_action TEXT DEFAULT '', created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS completed_projects(id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL UNIQUE, name TEXT NOT NULL, completed_at TEXT NOT NULL, FOREIGN KEY(project_id) REFERENCES projects(id));
         CREATE TABLE IF NOT EXISTS tasks(id INTEGER PRIMARY KEY, project_id INTEGER, title TEXT NOT NULL, description TEXT DEFAULT '', status TEXT DEFAULT 'todo', priority TEXT DEFAULT 'medium', due_date TEXT, depends_on TEXT DEFAULT '[]', created_at TEXT NOT NULL, FOREIGN KEY(project_id) REFERENCES projects(id));
         CREATE TABLE IF NOT EXISTS jobs(id INTEGER PRIMARY KEY, title TEXT NOT NULL, prompt TEXT NOT NULL, kind TEXT DEFAULT 'planning', status TEXT DEFAULT 'queued', checkpoint TEXT DEFAULT '', result TEXT DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS action_log(id INTEGER PRIMARY KEY, plugin TEXT NOT NULL, arguments TEXT NOT NULL, status TEXT NOT NULL, result TEXT DEFAULT '', created_at TEXT NOT NULL);
@@ -93,6 +94,7 @@ def init():
         _add_columns(c,'memories',{'importance':'INTEGER NOT NULL DEFAULT 3','pinned':'INTEGER NOT NULL DEFAULT 0','status':"TEXT NOT NULL DEFAULT 'active'",'last_used_at':"TEXT NOT NULL DEFAULT ''",'use_count':'INTEGER NOT NULL DEFAULT 0'})
         _add_columns(c,'tasks',{'sort_order':'INTEGER NOT NULL DEFAULT 0','assignee':"TEXT NOT NULL DEFAULT 'sage'",'kind':"TEXT NOT NULL DEFAULT 'doc'",'estimate_minutes':'INTEGER NOT NULL DEFAULT 0','acceptance':"TEXT NOT NULL DEFAULT ''",'blocked_reason':"TEXT NOT NULL DEFAULT ''",'result_summary':"TEXT NOT NULL DEFAULT ''",'started_at':"TEXT NOT NULL DEFAULT ''",'finished_at':"TEXT NOT NULL DEFAULT ''",'attempts':'INTEGER NOT NULL DEFAULT 0','paused':'INTEGER NOT NULL DEFAULT 0','milestone':"TEXT NOT NULL DEFAULT ''",'needs_input':"TEXT NOT NULL DEFAULT ''",'user_input':"TEXT NOT NULL DEFAULT ''"})
         _add_columns(c,'projects',{'autopilot':'INTEGER NOT NULL DEFAULT 1'})
+        c.execute("INSERT OR IGNORE INTO completed_projects(project_id,name,completed_at) SELECT id,name,created_at FROM projects WHERE status='completed'")
         _add_columns(c,'tool_approvals',{'computer_task_id':'INTEGER'})
         c.execute('UPDATE tasks SET sort_order=id*10 WHERE sort_order=0')
 
