@@ -373,7 +373,11 @@ def status():
         with urllib.request.urlopen(req, timeout=3) as response:
             models = json.loads(response.read()).get('models', [])
         names={str(item.get('name','')) for item in models}
-        def installed(name): return name in names or name.endswith(':latest') and name[:-7] in names
+        def installed(name):
+            name=str(name)
+            return name in names or f'{name}:latest' in names or (
+                name.endswith(':latest') and name[:-7] in names
+            )
         return {"online": True, "model": MODEL, "installed": installed(MODEL),
                 "coding_model": installed(CODING_MODEL), "reasoning_model": installed(REASONING_MODEL), "vision_model": installed(VISION_MODEL),
                 "embedding_model": installed(EMBED_MODEL), "models": sorted(names),

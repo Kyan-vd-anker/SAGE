@@ -130,3 +130,14 @@ class LlmTests(unittest.TestCase):
             offline = llm.status()
         self.assertFalse(offline['online'])
         self.assertEqual({item['installed'] for item in offline['lanes']}, {None})
+
+    def test_status_recognizes_untagged_configured_models_as_latest(self):
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps({
+            'models': [{'name': f'{llm.MODEL}:latest'}, {'name': f'{llm.REASONING_MODEL}:latest'}]
+        }).encode()
+        with patch('sage.llm.urllib.request.urlopen', return_value=response):
+            state = llm.status()
+        lanes = {item['model']: item for item in state['lanes']}
+        self.assertTrue(lanes[llm.MODEL]['installed'])
+        self.assertTrue(lanes[llm.REASONING_MODEL]['installed'])
