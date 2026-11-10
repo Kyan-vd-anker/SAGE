@@ -561,7 +561,9 @@ class Handler(BaseHTTPRequestHandler):
                 if not config.SHORTCUT_TOKEN: return send_json(self,{'error':'iPhone Shortcut endpoint is disabled; configure SAGE_SHORTCUT_TOKEN'},503)
                 supplied=self.headers.get('Authorization','')
                 if not hmac.compare_digest(supplied,'Bearer '+config.SHORTCUT_TOKEN): return send_json(self,{'error':'iPhone Shortcut token is invalid'},401)
-            body=payload(self, limit=25_000_000 if path in ('/api/import','/api/chat/stream') else 7_000_000 if path in ('/api/screen/describe','/api/studio/import') else 1_000_000)
+            # Chat uploads allow 18 MB of decoded files; base64 and JSON framing add roughly
+            # one third, so the HTTP envelope must be larger than the decoded-file limit.
+            body=payload(self, limit=32_000_000 if path in ('/api/import','/api/chat/stream') else 7_000_000 if path in ('/api/screen/describe','/api/studio/import') else 1_000_000)
             handled,value=routes.post(path,body)
             if handled: return send_json(self,value)
             if path=='/api/system/screen':
