@@ -11,7 +11,7 @@ const nav=$('#nav'),navGroups=[
   {name:'System',pages:['system','backups','troubleshooting','plugins','tailscale','logs']}
 ],navGroupByPage=new Map(navGroups.flatMap(group=>group.pages.map(page=>[page,group])));
 function groupNavigation(){
-  for(const button of [nav.children].filter(element=>element.matches('button[data-page]'))){
+  for(const button of [...nav.children].filter(element=>element.matches('button[data-page]'))){
     const page=button.dataset.page,group=navGroupByPage.get(page)||navGroups[navGroups.length-1];
     let details=[...nav.querySelectorAll(':scope > details')].find(item=>item.dataset.group===group.name);
     if(!details){details=document.createElement('details');details.className='navGroup';details.dataset.group=group.name;details.open=true;details.innerHTML=`<summary>${esc(group.name)}</summary><div class="navGroupItems"></div>`;nav.append(details)}
