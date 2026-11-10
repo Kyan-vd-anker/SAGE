@@ -639,7 +639,9 @@ def respond(user_text,project_id=None,emit=None,cancel=None,computer_task_id=Non
     smalltalk=_is_smalltalk(user_text)
     recent_limit = 6 if conversation_source in ('speaker', 'phone') else 0
     context_limit = 8 if recent_limit else 3
-    history,memories = _relevant_context(user_text,limit=context_limit,recent_limit=recent_limit)
+    history,memories = ([],[]) if document_context else _relevant_context(
+        user_text,limit=context_limit,recent_limit=recent_limit
+    )
     context=None if smalltalk else project_context(project_id)
     context_sections=[]
     if document_context:
@@ -658,7 +660,11 @@ def respond(user_text,project_id=None,emit=None,cancel=None,computer_task_id=Non
             '\n\nThe latest user turn includes attached documents whose extracted text is in the '
             'REFERENCE ONLY section above. Use that supplied text directly. Do not ask for file '
             'paths, do not use workspace/PDF-reading tools, and do not claim the attachments are '
-            'missing. If the text is incomplete, summarize the available parts and state that limitation.'
+            'missing. Ignore all previous chat summaries and retrieved conversation. Identify the '
+            'paper from its own title, abstract, introduction, methods, results, discussion, and '
+            'conclusion. Treat bibliography/references, citation entries, and cited-paper titles '
+            'as background only; do not summarize those cited papers. If the text is incomplete, '
+            'summarize the available parts and state that limitation.'
         )
     if resumed_task:
         messages[0]['content']+='\n\n'+computer_tasks.recovery_context(computer_task_id)
@@ -682,7 +688,8 @@ def respond(user_text,project_id=None,emit=None,cancel=None,computer_task_id=Non
             messages[0]['content'] += (
                 "\nProduce the requested paper reading or summary now. Cover the paper's purpose, "
                 'method, key findings, limitations, and practical significance when those details '
-                'are present. Do not call tools and do not ask for titles, links, or file paths.'
+                'are present. Summarize the attached paper itself, not papers mentioned in its '
+                'references. Do not call tools and do not ask for titles, links, or file paths.'
             )
             if emit:
                 emit({'type':'plain'})
