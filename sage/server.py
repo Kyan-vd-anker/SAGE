@@ -143,6 +143,7 @@ class Handler(BaseHTTPRequestHandler):
             if not db.rows('SELECT id FROM projects WHERE id=?',(project_id,)): return send_json(self,{'error':'Project not found'},404)
         message=str(body.get('message',''))
         if not message.strip(): return send_json(self,{'error':'Message is empty'},400)
+        document_context=self._selected_document_context(body.get('documents',[]))
         computer_task_id=body.get('computer_task_id')
         if computer_task_id is not None:
             try:
@@ -163,12 +164,40 @@ class Handler(BaseHTTPRequestHandler):
                 alive['ok']=False; cancel.cancel()
         emit({'type':'start','id':stream_id})
         try:
-            answer=agent.respond(message,project_id=project_id,emit=emit,cancel=cancel,computer_task_id=computer_task_id)
+            answer=agent.respond(message,project_id=project_id,emit=emit,cancel=cancel,computer_task_id=computer_task_id,document_context=document_context)
             emit({'type':'done','answer':answer,'model':agent.answer_model(),'stopped':cancel.cancelled})
         except Exception as exc:
             emit({'type':'error','error':str(exc)})
         finally:
             STREAMS.pop(stream_id,None); jobs.touch()
+
+    def _selected_document_context(self, documents):
+        if not isinstance(documents, list) or len(documents) > 5:
+            raise ValueError('Select between 1 and 5 documents')
+        sections=[]
+        for item in documents:
+            if not isinstance(item, dict):
+                continue
+            name=str(item.get('name') or 'document')[:160]
+            suffix=Path(name).suffix.lower()
+            try:
+                raw=base64.b64decode(str(item.get('data_b64') or ''), validate=True)
+                if suffix == '.pdf':
+                    from .studio import import_pdf
+                    content=import_pdf(raw)
+                elif suffix == '.docx':
+                    from .studio import import_docx
+                    content=import_docx(raw)
+                elif suffix in ('.txt','.md','.markdown','.csv','.json','.tex'):
+                    content=raw.decode('utf-8-sig','replace')
+                else:
+                    continue
+            except (ValueError, TypeError) as exc:
+                raise ValueError(f'{name}: {exc}') from None
+            if len(content) > 200_000:
+                raise ValueError(f'{name}: selected content is larger than 200 KB')
+            sections.append(f'--- {name} ---\n{content}')
+        return '\n\n'.join(sections)
     def client_is_allowed(self):
         try: address=ipaddress.ip_address(self.client_address[0])
         except ValueError: return False
@@ -525,7 +554,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not config.SHORTCUT_TOKEN: return send_json(self,{'error':'iPhone Shortcut endpoint is disabled; configure SAGE_SHORTCUT_TOKEN'},503)
                 supplied=self.headers.get('Authorization','')
                 if not hmac.compare_digest(supplied,'Bearer '+config.SHORTCUT_TOKEN): return send_json(self,{'error':'iPhone Shortcut token is invalid'},401)
-            body=payload(self, limit=25_000_000 if path == '/api/import' else 7_000_000 if path in ('/api/screen/describe','/api/studio/import') else 1_000_000)
+            body=payload(self, limit=25_000_000 if path in ('/api/import','/api/chat/stream') else 7_000_000 if path in ('/api/screen/describe','/api/studio/import') else 1_000_000)
             handled,value=routes.post(path,body)
             if handled: return send_json(self,value)
             if path=='/api/system/screen':
