@@ -930,6 +930,7 @@ class Handler(BaseHTTPRequestHandler):
                 files=body.get('files',[])
                 if not isinstance(files,list) or not files or len(files)>20: return send_json(self,{'error':'Choose between 1 and 20 files'},400)
                 import_dir=config.DATA/'imports'; import_dir.mkdir(parents=True,exist_ok=True); imported=[]
+                failures=[]
                 for item in files:
                     original=str(item.get('name',''))
                     suffix=Path(original).suffix.lower()
@@ -939,9 +940,12 @@ class Handler(BaseHTTPRequestHandler):
                         try:
                             from .studio import import_pdf
                             content=import_pdf(base64.b64decode(content,validate=True))
-                        except (ValueError, TypeError):
+                        except (ValueError, TypeError) as exc:
+                            failures.append(f'{original}: {exc}')
                             continue
-                    if len(content)>200_000: continue
+                    if len(content)>900_000:
+                        failures.append(f'{original}: extracted text is larger than 900 KB')
+                        continue
                     stem=re.sub(r'[^\w -]','',Path(original).stem).strip()[:80] or 'Imported file'
                     name=stem; number=2
                     while (import_dir/(name+suffix)).exists(): name=f'{stem} {number}'; number+=1
@@ -950,7 +954,9 @@ class Handler(BaseHTTPRequestHandler):
                     note=(config.VAULT/(note_title+'.md')).resolve(); note.relative_to(config.VAULT.resolve())
                     note.write_text(f"# {note_title}\n\nImported from `{original}`.\n\n{content[:200000]}\n",encoding='utf-8')
                     imported.append({'name':name+suffix,'note':note_title})
-                if not imported: return send_json(self,{'error':'Supported formats are .txt, .md, .markdown, .csv, .json, and text-based .pdf'},400)
+                if not imported:
+                    detail='; '.join(failures) if failures else 'no supported files were selected'
+                    return send_json(self,{'error':detail},400)
                 return send_json(self,{'imported':imported})
             if path=='/api/watchlist':
                 topic=str(body.get('topic','')).strip()[:300]
