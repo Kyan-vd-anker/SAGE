@@ -7,11 +7,11 @@ if [[ "$(id -u)" -eq 0 ]]; then
 fi
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-PYTHON="$(command -v python3 || true)"
-if [[ -z "$PYTHON" ]]; then
-  echo "python3 is required. Install it with: sudo apt install python3" >&2
+if ! bash "$ROOT_DIR/scripts/install-kali-dependencies.sh"; then
+  echo "Could not install Sage's Kali dependencies." >&2
   exit 1
 fi
+PYTHON="$(command -v python3)"
 if ! command -v systemctl >/dev/null 2>&1 || ! command -v loginctl >/dev/null 2>&1; then
   echo "A systemd-based Kali installation is required to install the auto-start service." >&2
   exit 1

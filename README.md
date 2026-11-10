@@ -57,12 +57,11 @@ Sign in to Tailscale on the iPhone and keep Sage's Tailscale Serve route active.
 
 ## Install on Kali Linux and start at boot
 
-Sage's core runs on Kali with Python 3 and systemd without extra Python packages. Phone speech recognition is optional and uses the separate `faster-whisper` environment described below. Ollama provides the local language models.
+The installer installs Sage's required Kali packages, including PDF extraction, plotting, engineering-property calculations, local PDF attachment handling, and speaker audio support. Phone speech recognition remains optional and uses the separate `faster-whisper` environment described below. Ollama provides the local language models.
 
-1. Install Python and Git, then install Ollama using its official Linux instructions:
+1. Install Git, then install Ollama using its official Linux instructions:
    ```
    sudo apt update
-   sudo apt install -y python3 git curl xdotool scrot
    curl -fsSL https://ollama.com/install.sh | sh
    ```
    Review the Ollama installation instructions at <https://ollama.com/download/linux> if you prefer not to use its install script.
@@ -79,7 +78,7 @@ Sage's core runs on Kali with Python 3 and systemd without extra Python packages
    ```
    bash scripts/install-kali.sh
    ```
-   The installer enables systemd lingering for your user so Sage starts after boot even before you log in. It starts on `127.0.0.1:8000`; open <http://127.0.0.1:8000> on the Kali PC.
+   The installer installs or updates all required Debian packages before enabling systemd lingering for your user, so Sage starts after boot even before you log in. It starts on `127.0.0.1:8000`; open <http://127.0.0.1:8000> on the Kali PC.
 
 ### Updating without losing data
 

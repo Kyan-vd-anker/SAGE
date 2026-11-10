@@ -20,6 +20,9 @@ branch="$(git -C "$ROOT_DIR" branch --show-current)"
 if ! git -C "$ROOT_DIR" diff --quiet || ! git -C "$ROOT_DIR" diff --cached --quiet; then
   fail "Tracked files have local edits. Commit or safely copy them elsewhere before updating."
 fi
+if ! bash "$ROOT_DIR/scripts/install-kali-dependencies.sh"; then
+  fail "Could not install Sage's Kali dependencies."
+fi
 
 was_active=0
 if systemctl --user is-active --quiet "$SERVICE"; then was_active=1; fi

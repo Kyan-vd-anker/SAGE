@@ -26,6 +26,7 @@ KINDS = ('latex', 'doc', 'sheet')
 MAX_CONTENT = 900_000
 MAX_CELLS = 20000
 MAX_UNZIPPED = 20_000_000
+MAX_PDF_PAGES = 500
 SPEAK_GAP_SECONDS = 45
 _last_spoken = 0.0
 _spoken_keys = {}  # (message, place) -> when it was said, so a note that stays is not repeated
@@ -705,6 +706,27 @@ def import_csv(text):
     return json.dumps({'cells': cells}, ensure_ascii=False)
 
 
+def import_pdf(data):
+    """Extract text from a local text-based PDF without writing it to disk."""
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        raise ValueError('PDF import requires the optional pypdf package')
+    try:
+        reader = PdfReader(io.BytesIO(data))
+        if len(reader.pages) > MAX_PDF_PAGES:
+            raise ValueError(f'PDF has more than {MAX_PDF_PAGES} pages')
+        pages = [page.extract_text() or '' for page in reader.pages]
+    except ValueError:
+        raise
+    except Exception:
+        raise ValueError('This PDF could not be read')
+    content = '\n\n'.join(text.strip() for text in pages if text and text.strip()).strip()
+    if not content:
+        raise ValueError('This PDF contains no extractable text; scanned PDFs require OCR')
+    return content + '\n'
+
+
 def export_csv(content):
     cells = sheet_cells(content)
     if not cells:
@@ -746,10 +768,11 @@ def import_file(filename, data):
     title = Path(filename).stem[:120] or 'Imported'
     if suffix == '.docx': return 'doc', title, import_docx(data)
     if suffix == '.xlsx': return 'sheet', title, import_xlsx(data)
+    if suffix == '.pdf': return 'doc', title, import_pdf(data)
     if suffix in ('.csv', '.tsv'): return 'sheet', title, import_csv(data.decode('utf-8-sig', 'replace'))
     if suffix == '.tex': return 'latex', title, data.decode('utf-8-sig', 'replace')
     if suffix in ('.md', '.txt'): return 'doc', title, data.decode('utf-8-sig', 'replace')
-    raise ValueError('Studio opens .docx, .xlsx, .csv, .tex, .md and .txt files')
+    raise ValueError('Studio opens .pdf, .docx, .xlsx, .csv, .tex, .md and .txt files')
 
 
 # ------------------------------------------------------------------ HTTP routes (called from routes.py)

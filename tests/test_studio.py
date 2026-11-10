@@ -13,6 +13,25 @@ from unittest.mock import patch
 from sage import config, db, studio
 
 
+def build_pdf(text):
+    stream = f'BT /F1 12 Tf 10 50 Td ({text}) Tj ET'.encode()
+    objects = [
+        b'<</Type/Catalog/Pages 2 0 R>>',
+        b'<</Type/Pages/Kids[3 0 R]/Count 1>>',
+        b'<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 100]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>',
+        b'<</Length %d>>\nstream\n' % len(stream) + stream + b'\nendstream',
+        b'<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>',
+    ]
+    out = bytearray(b'%PDF-1.4\n'); offsets = []
+    for number, body in enumerate(objects, 1):
+        offsets.append(len(out)); out += b'%d 0 obj\n' % number + body + b'\nendobj\n'
+    xref = len(out)
+    out += b'xref\n0 %d\n0000000000 65535 f \n' % (len(objects) + 1)
+    for offset in offsets: out += b'%010d 00000 n \n' % offset
+    out += b'trailer\n<</Root 1 0 R/Size %d>>\nstartxref\n%d\n%%%%EOF\n' % (len(objects) + 1, xref)
+    return bytes(out)
+
+
 class StudioStorageTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup); root = Path(self.tmp.name)
@@ -222,6 +241,15 @@ class OfficeFileTests(unittest.TestCase):
             z.writestr('word/document.xml', '<!DOCTYPE x [<!ENTITY a "aaaa">]><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>')
         with self.assertRaises(ValueError): studio.import_docx(bomb.getvalue())
         with self.assertRaises(ValueError): studio.import_file('notes.pdf', b'x')
+
+    def test_pdf_import_extracts_text(self):
+        try:
+            import pypdf  # noqa: F401
+        except ImportError:
+            self.skipTest('pypdf not installed')
+        kind, title, content = studio.import_file('research.pdf', build_pdf('Hello Sage'))
+        self.assertEqual((kind, title), ('doc', 'research'))
+        self.assertIn('Hello Sage', content)
 
     def test_import_and_export_routes(self):
         data = base64.b64encode(studio.export_xlsx(json.dumps({'cells': {'A1': '5'}}))).decode()
