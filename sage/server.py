@@ -175,13 +175,20 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(documents, list) or len(documents) > 5:
             raise ValueError('Select between 1 and 5 documents')
         sections=[]
+        total_bytes=0
         for item in documents:
             if not isinstance(item, dict):
-                continue
+                raise ValueError('Each selected document must be an object')
             name=str(item.get('name') or 'document')[:160]
             suffix=Path(name).suffix.lower()
             try:
-                raw=base64.b64decode(str(item.get('data_b64') or ''), validate=True)
+                encoded=str(item.get('data_b64') or '')
+                raw=base64.b64decode(encoded, validate=True)
+                total_bytes += len(raw)
+                if len(raw) > 8_000_000:
+                    raise ValueError(f'{name}: selected files must be 8 MB or smaller')
+                if total_bytes > 18_000_000:
+                    raise ValueError('Selected files must total 18 MB or less')
                 if suffix == '.pdf':
                     from .studio import import_pdf
                     content=import_pdf(raw)
@@ -192,7 +199,7 @@ class Handler(BaseHTTPRequestHandler):
                     content=raw.decode('utf-8-sig','replace')
                 else:
                     continue
-            except (ValueError, TypeError) as exc:
+            except (ValueError, TypeError, binascii.Error, OSError) as exc:
                 raise ValueError(f'{name}: {exc}') from None
             if len(content) > 200_000:
                 raise ValueError(f'{name}: selected content is larger than 200 KB')
