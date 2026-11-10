@@ -525,7 +525,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not config.SHORTCUT_TOKEN: return send_json(self,{'error':'iPhone Shortcut endpoint is disabled; configure SAGE_SHORTCUT_TOKEN'},503)
                 supplied=self.headers.get('Authorization','')
                 if not hmac.compare_digest(supplied,'Bearer '+config.SHORTCUT_TOKEN): return send_json(self,{'error':'iPhone Shortcut token is invalid'},401)
-            body=payload(self, limit=7_000_000 if path in ('/api/screen/describe','/api/studio/import') else 1_000_000)
+            body=payload(self, limit=7_000_000 if path in ('/api/screen/describe','/api/studio/import','/api/import') else 1_000_000)
             handled,value=routes.post(path,body)
             if handled: return send_json(self,value)
             if path=='/api/system/screen':
@@ -933,8 +933,14 @@ class Handler(BaseHTTPRequestHandler):
                 for item in files:
                     original=str(item.get('name',''))
                     suffix=Path(original).suffix.lower()
-                    if suffix not in ('.txt','.md','.markdown','.csv','.json'): continue
+                    if suffix not in ('.txt','.md','.markdown','.csv','.json','.pdf'): continue
                     content=str(item.get('content',''))
+                    if suffix == '.pdf':
+                        try:
+                            from .studio import import_pdf
+                            content=import_pdf(base64.b64decode(content,validate=True))
+                        except (ValueError, TypeError):
+                            continue
                     if len(content)>200_000: continue
                     stem=re.sub(r'[^\w -]','',Path(original).stem).strip()[:80] or 'Imported file'
                     name=stem; number=2
@@ -944,7 +950,7 @@ class Handler(BaseHTTPRequestHandler):
                     note=(config.VAULT/(note_title+'.md')).resolve(); note.relative_to(config.VAULT.resolve())
                     note.write_text(f"# {note_title}\n\nImported from `{original}`.\n\n{content[:200000]}\n",encoding='utf-8')
                     imported.append({'name':name+suffix,'note':note_title})
-                if not imported: return send_json(self,{'error':'Supported formats are .txt, .md, .markdown, .csv, and .json'},400)
+                if not imported: return send_json(self,{'error':'Supported formats are .txt, .md, .markdown, .csv, .json, and text-based .pdf'},400)
                 return send_json(self,{'imported':imported})
             if path=='/api/watchlist':
                 topic=str(body.get('topic','')).strip()[:300]
