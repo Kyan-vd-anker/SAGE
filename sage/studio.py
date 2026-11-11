@@ -706,8 +706,9 @@ def import_csv(text):
     return json.dumps({'cells': cells}, ensure_ascii=False)
 
 
-def import_pdf(data):
-    """Extract text from a local text-based PDF without writing it to disk."""
+def extract_pdf_pages(data):
+    """Per-page text of a local text-based PDF (index 0 = page 1) plus its embedded metadata. Page boundaries are kept
+    so answers can cite pages. Nothing is written to disk."""
     try:
         from pypdf import PdfReader
     except ImportError:
@@ -717,13 +718,26 @@ def import_pdf(data):
         if len(reader.pages) > MAX_PDF_PAGES:
             raise ValueError(f'PDF has more than {MAX_PDF_PAGES} pages')
         pages = [page.extract_text() or '' for page in reader.pages]
+        meta = {}
+        try:
+            info = reader.metadata
+            if info:
+                meta = {'title': str(info.title or ''), 'author': str(info.author or ''), 'created': str(info.get('/CreationDate') or '')}
+        except Exception:
+            meta = {}
     except ValueError:
         raise
     except Exception:
         raise ValueError('This PDF could not be read')
-    content = '\n\n'.join(text.strip() for text in pages if text and text.strip()).strip()
-    if not content:
+    if not any(text and text.strip() for text in pages):
         raise ValueError('This PDF contains no extractable text; scanned PDFs require OCR')
+    return pages, meta
+
+
+def import_pdf(data):
+    """Extract text from a local text-based PDF without writing it to disk."""
+    pages, _ = extract_pdf_pages(data)
+    content = '\n\n'.join(text.strip() for text in pages if text and text.strip()).strip()
     return content + '\n'
 
 

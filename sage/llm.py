@@ -235,7 +235,7 @@ class StreamCancel:
             except Exception: pass
 
 
-def chat_stream(messages, tools=None, max_tokens=None, on_token=None, cancel=None, timeout=600, model=None):
+def chat_stream(messages, tools=None, max_tokens=None, on_token=None, cancel=None, timeout=600, model=None, num_ctx=None):
     """Foreground chat that streams: on_token(text) is called for every piece of text as it is generated.
     Returns the finished assistant message (content and any tool_calls). `timeout` applies to silence
     between pieces, not to the whole reply."""
@@ -244,6 +244,7 @@ def chat_stream(messages, tools=None, max_tokens=None, on_token=None, cancel=Non
     conn = None
     parts = []
     calls = []
+    prompt_tokens = None
     try:
         url = urlparse(OLLAMA_URL.rstrip('/') + '/api/chat')
         factory = http.client.HTTPSConnection if url.scheme == 'https' else http.client.HTTPConnection
@@ -254,6 +255,7 @@ def chat_stream(messages, tools=None, max_tokens=None, on_token=None, cancel=Non
         data = {"model": model, "messages": _baked(model, messages), "stream": True, "keep_alive": "30m"}
         if tools: data['tools'] = tools
         if max_tokens is not None: data['options'] = {"num_predict": max_tokens}
+        if num_ctx: data.setdefault('options', {})['num_ctx'] = int(num_ctx)
         conn.request('POST', url.path, body=json.dumps(data).encode(), headers={"Content-Type": "application/json"})
         if cancel is not None and cancel.cancelled: raise StreamCancelled('')
         response = conn.getresponse()
@@ -275,10 +277,12 @@ def chat_stream(messages, tools=None, max_tokens=None, on_token=None, cancel=Non
             if message.get('tool_calls'): calls.extend(message['tool_calls'])
             if chunk.get('done'):
                 _record_speed(model, chunk)
+                prompt_tokens = chunk.get('prompt_eval_count')
                 break
         if cancel is not None and cancel.cancelled: raise StreamCancelled(''.join(parts))
         reply = {'role': 'assistant', 'content': ''.join(parts)}
         if calls: reply['tool_calls'] = calls
+        if prompt_tokens: reply['_prompt_tokens'] = prompt_tokens  # tokens Ollama actually evaluated; document mode compares this with the context window
         return reply
     except (StreamCancelled, OllamaError, ToolsUnsupported): raise
     except Exception as exc:

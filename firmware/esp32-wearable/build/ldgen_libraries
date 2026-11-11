@@ -38,6 +38,7 @@ C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/app_update/libapp_upda
 C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/esp_app_format/libesp_app_format.a
 C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/esp_bootloader_format/libesp_bootloader_format.a
 C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/esp_gdbstub/libesp_gdbstub.a
+C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/esp_coex/libesp_coex.a
 C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/driver/libdriver.a
 C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/esp_driver_pcnt/libesp_driver_pcnt.a
 C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/esp_driver_gptimer/libesp_driver_gptimer.a
@@ -66,7 +67,6 @@ C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/esp_wifi/libesp_wifi.a
 C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/esp_phy/libesp_phy.a
 C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/esp_netif/libesp_netif.a
 C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/wpa_supplicant/libwpa_supplicant.a
-C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/esp_coex/libesp_coex.a
 C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/esp_https_ota/libesp_https_ota.a
 C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/esp_security/libesp_security.a
 C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/pthread/libpthread.a
@@ -109,6 +109,7 @@ C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/wpa_supplicant/libwpa_
 C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/esp_coex/libesp_coex.a
 C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/esp_wifi/libesp_wifi.a
 C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/esp_gdbstub/libesp_gdbstub.a
+C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/bt/libbt.a
 C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/unity/libunity.a
 C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/cmock/libcmock.a
 C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/unity/libunity.a
@@ -134,6 +135,7 @@ C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/esp_driver_cam/libesp_
 C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/esp_driver_touch_sens/libesp_driver_touch_sens.a
 C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/esp_eth/libesp_eth.a
 C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/esp_hid/libesp_hid.a
+C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/bt/libbt.a
 C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/tcp_transport/libtcp_transport.a
 C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/esp_http_client/libesp_http_client.a
 C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/esp_http_server/libesp_http_server.a

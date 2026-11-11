@@ -4,6 +4,9 @@ All notable changes to SAGE are documented here. Version numbers follow `MAJOR.M
 
 ## Unreleased
 
+- Fix attached documents being summarised wrongly (for example a cited paper instead of the attached one). Cause: the whole text was pasted into a 4096-token prompt, Ollama silently dropped everything but the end of it (the reference list). Documents now go through `sage/docqa.py`: per-page ingestion, reference-list exclusion, document-only retrieval, token-budgeted prompts (`SAGE_DOC_NUM_CTX`), verified identification, claim/number/citation verification, and an explicit "not found" instead of guessing.
+- Document answers are no longer fed back as chat history, never trigger reflection, and are logged to `data/logs/docqa.log`.
+
 ## 2.4.0 - 2026-10-28
 
 - Add Outlook email search, unread inbox briefs, and reply drafts that are saved but never sent.

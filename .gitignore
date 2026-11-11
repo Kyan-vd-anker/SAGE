@@ -41,3 +41,5 @@ firmware/esp32-c3/managed_components/
 firmware/esp32-c3/sdkconfig
 firmware/esp32-c3/sdkconfig.old
 firmware/esp32-c3/dependencies.lock
+# ESP-IDF build output
+firmware/esp32-wearable/build/

@@ -29,6 +29,11 @@ WAKE_WORD = os.getenv("SAGE_WAKE_WORD", "sage")
 PASSWORD = os.getenv("SAGE_PASSWORD", "")  # dashboard login; empty = no login (set it in the ignored start-sage.local.bat)
 VOICE_STREAM_REPLIES = os.getenv("SAGE_VOICE_STREAM", "1").lower() in ("1", "true", "yes", "on")  # speaker talks while the model is still writing
 SPEAKER_ROOM = os.getenv("SAGE_SPEAKER_ROOM", "bedroom")  # the room the speaker is in (as named in SAGE_BLE_NODE_ROOMS)
+# Document question answering (see docqa.py). NUM_CTX is the whole context window Ollama allocates for a document call
+# (prompt + reply); Sage sizes every document prompt to fit inside it instead of letting Ollama silently truncate.
+DOC_MODEL = os.getenv("SAGE_DOC_MODEL", REASONING_MODEL)
+DOC_NUM_CTX = int(os.getenv("SAGE_DOC_NUM_CTX", "8192"))
+DOC_MAP_MAX_CALLS = int(os.getenv("SAGE_DOC_MAP_MAX_CALLS", "8"))  # model passes used to read a document too long for one window
 STUDIO_MODEL = os.getenv("SAGE_STUDIO_MODEL", "")  # model that reviews Studio text; empty = fast lane for documents, deep lane for LaTeX and sheets
 LOGIN_EXEMPT_IPS = {item.strip() for item in os.getenv("SAGE_LOGIN_EXEMPT_IPS", "").split(",") if item.strip()}  # devices that skip the login (e.g. wall display); empty by default
 HA_TOKEN = os.getenv("SAGE_HA_TOKEN", "")

@@ -143,7 +143,7 @@ class Handler(BaseHTTPRequestHandler):
             if not db.rows('SELECT id FROM projects WHERE id=?',(project_id,)): return send_json(self,{'error':'Project not found'},404)
         message=str(body.get('message',''))
         if not message.strip(): return send_json(self,{'error':'Message is empty'},400)
-        document_context=self._selected_document_context(body.get('documents',[]))
+        documents=self._selected_document_context(body.get('documents',[]))
         computer_task_id=body.get('computer_task_id')
         if computer_task_id is not None:
             try:
@@ -164,7 +164,7 @@ class Handler(BaseHTTPRequestHandler):
                 alive['ok']=False; cancel.cancel()
         emit({'type':'start','id':stream_id})
         try:
-            answer=agent.respond(message,project_id=project_id,emit=emit,cancel=cancel,computer_task_id=computer_task_id,document_context=document_context)
+            answer=agent.respond(message,project_id=project_id,emit=emit,cancel=cancel,computer_task_id=computer_task_id,documents=documents)
             emit({'type':'done','answer':answer,'model':agent.answer_model(),'stopped':cancel.cancelled})
         except Exception as exc:
             emit({'type':'error','error':str(exc)})
@@ -174,7 +174,8 @@ class Handler(BaseHTTPRequestHandler):
     def _selected_document_context(self, documents):
         if not isinstance(documents, list) or len(documents) > 5:
             raise ValueError('Select between 1 and 5 documents')
-        sections=[]
+        from . import docqa
+        loaded=[]
         total_bytes=0
         for item in documents:
             if not isinstance(item, dict):
@@ -189,24 +190,16 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError(f'{name}: selected files must be 8 MB or smaller')
                 if total_bytes > 18_000_000:
                     raise ValueError('Selected files must total 18 MB or less')
-                if suffix == '.pdf':
-                    from .studio import import_pdf
-                    content=import_pdf(raw)
-                elif suffix == '.docx':
-                    from .studio import import_docx
-                    content=import_docx(raw)
-                elif suffix in ('.txt','.md','.markdown','.csv','.json','.tex'):
-                    content=raw.decode('utf-8-sig','replace')
-                else:
+                if suffix not in ('.pdf','.docx','.txt','.md','.markdown','.csv','.json','.tex'):
                     continue
+                # Parsed into per-page text, chunked and identified once (cached by content hash). The text is NOT
+                # pasted into the prompt any more: docqa retrieves from these documents only.
+                loaded.append(docqa.load_document(name, raw))
             except (ValueError, TypeError, binascii.Error, OSError) as exc:
                 raise ValueError(f'{name}: {exc}') from None
-            if len(content) > 200_000:
-                raise ValueError(f'{name}: selected content is larger than 200 KB')
-            sections.append(f'--- {name} ---\n{content}')
-        if documents and not sections:
+        if documents and not loaded:
             raise ValueError('No supported document content was extracted. Select PDF, DOCX, TXT, Markdown, CSV, JSON, or TEX files.')
-        return '\n\n'.join(sections)
+        return loaded
     def client_is_allowed(self):
         try: address=ipaddress.ip_address(self.client_address[0])
         except ValueError: return False

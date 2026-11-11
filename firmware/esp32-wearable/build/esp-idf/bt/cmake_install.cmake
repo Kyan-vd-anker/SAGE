@@ -37,3 +37,33 @@ if(NOT DEFINED CMAKE_OBJDUMP)
   set(CMAKE_OBJDUMP "C:/Espressif/tools/xtensa-esp-elf/esp-14.2.0_20260121/xtensa-esp-elf/bin/xtensa-esp32-elf-objdump.exe")
 endif()
 
+if(NOT CMAKE_INSTALL_LOCAL_ONLY)
+  # Include the install script for the subdirectory.
+  include("C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/bt/common/cmake_install.cmake")
+endif()
+
+if(NOT CMAKE_INSTALL_LOCAL_ONLY)
+  # Include the install script for the subdirectory.
+  include("C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/bt/controller/cmake_install.cmake")
+endif()
+
+if(NOT CMAKE_INSTALL_LOCAL_ONLY)
+  # Include the install script for the subdirectory.
+  include("C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/bt/host/bluedroid/cmake_install.cmake")
+endif()
+
+if(NOT CMAKE_INSTALL_LOCAL_ONLY)
+  # Include the install script for the subdirectory.
+  include("C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/bt/host/nimble/cmake_install.cmake")
+endif()
+
+if(NOT CMAKE_INSTALL_LOCAL_ONLY)
+  # Include the install script for the subdirectory.
+  include("C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/bt/esp_ble_mesh/cmake_install.cmake")
+endif()
+
+if(NOT CMAKE_INSTALL_LOCAL_ONLY)
+  # Include the install script for the subdirectory.
+  include("C:/Github Sage/SAGE/firmware/esp32-wearable/build/esp-idf/bt/ble_profiles/cmake_install.cmake")
+endif()
+

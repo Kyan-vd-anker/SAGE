@@ -24,9 +24,9 @@ from sage import agent, config  # noqa: E402
 
 # Standardizing parameters to reduce processing bottlenecks during prompt evaluation
 MODELS = [
-    ('local/sage-fast', 'qwen2.5:3b', {'num_ctx': 40960, 'temperature': 0.6, 'top_p': 0.9}),
-    ('local/sage-coder', 'qwen2.5-coder:7b', {'num_ctx': 40960, 'temperature': 0.2, 'top_p': 0.9}),
-    ('local/sage-reason', 'deepseek-r1:7b', {'num_ctx': 40960, 'temperature': 0.6, 'top_p': 0.95}),
+    ('local/sage-fast', 'qwen2.5:3b', {'num_ctx': 8192, 'temperature': 0.6, 'top_p': 0.9}),
+    ('local/sage-coder', 'qwen2.5-coder:7b', {'num_ctx': 8192, 'temperature': 0.2, 'top_p': 0.9}),
+    ('local/sage-reason', 'deepseek-r1:7b', {'num_ctx': 8192, 'temperature': 0.6, 'top_p': 0.95}),
 ]
 ENV_NAMES = {
     'local/sage-fast': 'SAGE_FAST_MODEL', 
