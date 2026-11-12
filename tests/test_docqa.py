@@ -363,6 +363,31 @@ class SummaryTests(Corpus):
         self.assertIn('### D1: graphene-epoxy.pdf', answer.text)
         self.assertIn('### D2: lc-display.pdf', answer.text)
 
+    def test_a_summary_is_always_returned_even_if_it_cannot_be_fact_checked(self):
+        wrong = ('The paper presents a photoresponsive fiber array that mimics the collective motion of cilia [D1 p.1]. '
+                 'The fibers are made of PANI/PDA composites and bend under alternating light fields [D1 p.2]. '
+                 'Their motion is sensitive to temperature, and the array transports particles [D1 p.3].')
+        answer = docqa.respond('Summarize this paper.', [self.lcp], FakeModel([wrong]))
+        self.assertEqual(answer.status, 'unverified')
+        self.assertIn(fx.LCP_TITLE, answer.text)
+        self.assertIn('Could not be fully fact-checked', answer.text)
+        self.assertIn('progress in liquid crystal polymers', answer.text)      # the document's own abstract is the fallback summary
+        self.assertNotIn('PANI', answer.text)                                 # a summary of some other paper is never shown
+
+    def test_a_partly_unverifiable_summary_is_shown_with_the_unsupported_sentences_marked(self):
+        page = page_of(self.epoxy, '1.84')
+        draft = (f'Thermal conductivity rose from 0.21 W/mK to 1.84 W/mK at 20 wt% loading [D1 p.{page}]. '
+                 f'Tensile strength fell from 62 MPa to 48 MPa [D1 p.{page}]. '
+                 f'Samples were annealed at 300 \u00b0C for 10 h before testing [D1 p.{page}]. '
+                 f'The matrix was a polyurethane foam reinforced with carbon fibres [D1 p.{page}].')
+        answer = docqa.respond('Summarize this paper.', [self.epoxy], FakeModel([draft]))
+        self.assertEqual(answer.status, 'unverified')
+        self.assertIn('Could not be fully fact-checked', answer.text)
+        self.assertIn('1.84 W/mK', answer.text)
+        self.assertIn('\u26a0 *unverified:* Samples were annealed', answer.text)
+        self.assertIn('\u26a0 *unverified:* The matrix was a polyurethane foam', answer.text)
+        self.assertNotIn('\u26a0 *unverified:* Thermal conductivity', answer.text)
+
     def test_identification_questions_are_answered_from_the_file_without_the_model(self):
         model = FakeModel(['unused'])
         answer = docqa.respond('Who wrote this paper?', [self.lcp], model)

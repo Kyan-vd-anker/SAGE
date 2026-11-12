@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "driver/gpio.h"
@@ -268,10 +269,19 @@ static esp_err_t setup_get(httpd_req_t *request)
 
 static esp_err_t bluetooth_devices_get(httpd_req_t *request)
 {
-    char devices[4096];
-    bt_audio_get_devices_json(devices, sizeof(devices));
+    /* Heap, not stack: the httpd task's stack is only a few KB, and a 4 KB local here overran it
+     * and corrupted httpd's session table (crash in httpd_sess_clear_ctx, PC 0x0000001a). */
+    const size_t size = 6144;
+    char *devices = malloc(size);
+    if (!devices) {
+        httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+        return ESP_OK;
+    }
+    bt_audio_get_devices_json(devices, size);
     httpd_resp_set_type(request, "application/json");
-    return httpd_resp_send(request, devices, HTTPD_RESP_USE_STRLEN);
+    esp_err_t err = httpd_resp_send(request, devices, HTTPD_RESP_USE_STRLEN);
+    free(devices);
+    return err;
 }
 
 static esp_err_t bluetooth_status_get(httpd_req_t *request)
@@ -439,6 +449,8 @@ static void start_setup_ap(void)
 static void start_setup_server(void)
 {
     httpd_config_t server_config = HTTPD_DEFAULT_CONFIG();
+    server_config.stack_size = 8192;          /* setup_post alone keeps ~800 bytes of buffers on the stack */
+    server_config.lru_purge_enable = true;    /* the page polls every 2 s; drop the oldest idle connection instead of failing */
     ESP_ERROR_CHECK(httpd_start(&setup_server, &server_config));
     httpd_uri_t get = {.uri = "/", .method = HTTP_GET, .handler = setup_get};
     httpd_uri_t post = {.uri = "/", .method = HTTP_POST, .handler = setup_post};

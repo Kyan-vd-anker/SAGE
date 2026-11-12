@@ -1,7 +1,7 @@
 {
     "version":            "1.2",
     "project_name":       "sage_wearable",
-    "project_version":    "v2.4.0-56-g3f281d7-dirty",
+    "project_version":    "v2.4.0-57-g69465fb-dirty",
     "project_path":       "C:/Github Sage/SAGE/firmware/esp32-wearable",
     "idf_path":           "C:/Espressif/frameworks/esp-idf-v5.5.6",
     "build_dir":          "C:/Github Sage/SAGE/firmware/esp32-wearable/build",

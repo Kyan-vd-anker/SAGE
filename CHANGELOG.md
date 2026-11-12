@@ -6,6 +6,7 @@ All notable changes to SAGE are documented here. Version numbers follow `MAJOR.M
 
 - Fix attached documents being summarised wrongly (for example a cited paper instead of the attached one). Cause: the whole text was pasted into a 4096-token prompt, Ollama silently dropped everything but the end of it (the reference list). Documents now go through `sage/docqa.py`: per-page ingestion, reference-list exclusion, document-only retrieval, token-budgeted prompts (`SAGE_DOC_NUM_CTX`), verified identification, claim/number/citation verification, and an explicit "not found" instead of guessing.
 - Document answers are no longer fed back as chat history, never trigger reflection, and are logged to `data/logs/docqa.log`.
+- Studio: new **Read a paper** button. Sage reads a PDF/DOCX/TXT with the source-grounded pipeline and opens a Studio document with the paper's important parts (verified identification, page-cited summary, the numbers it states, its structure). New **Assistant** tab: ask questions about the paper that was read (answers cite pages, or say the paper doesn't contain it), or about your own draft; say "I'm going to write a paper about ..." or describe a paper to get a first LaTeX/Markdown layout with what to write in each section (builds on the paper that was read, never invents numbers or citations, falls back to a standard layout if the model is unavailable). Read papers are stored locally and removed with their last document.
 
 ## 2.4.0 - 2026-10-28
 

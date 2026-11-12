@@ -1036,7 +1036,8 @@ def _finalize(text, docs, attempt, prefix='', suffix=''):
                                     ' Write the answer again. Use only statements that the passages above support, each with its [label page] source. '
                                     'If something is not in the passages, say it is not stated.'})
     return Answer('', 'unverified', {'claims': check.claims, 'flagged': [{'sentence': s, 'reason': r} for s, r in check.flagged],
-                                     'mismatch': check.mismatch_reasons})
+                                     'mismatch': check.mismatch_reasons, 'draft': text, 'flagged_sentences': [s for s, _ in check.flagged],
+                                     'ref_only_terms': check.ref_only_terms})
 
 
 def _assemble(prefix, body, suffix):
@@ -1138,7 +1139,8 @@ def _summarize_one(doc, ask, emit, num_ctx, answer_tokens, map_calls):
                              f'Pages not analysed: {_page_ranges(pages)}.*')
             report['pages_not_analysed'] = pages
         if not notes:
-            return Answer(f'{prefix}\n\nI could not extract verifiable statements from {doc.name}, so I am not summarising it.', 'unverified', report)
+            return Answer(f'{prefix}\n\n{_UNVERIFIED_BANNER}\n\nI could not extract statements I could check from the reading passes, so this is taken directly '
+                          f'from the document\'s own opening and concluding passages:\n\n{_extractive_summary(doc)}{coverage_note}', 'unverified', report)
         order = {'own': 0, 'method': 1, 'future': 2, 'prior': 3, 'background': 4}
         notes.sort(key=lambda n: (n[0], order[n[1]]))
         lines = [f'- {doc.cite(p)} ({t}) {f}' for p, t, f in notes]
@@ -1166,18 +1168,43 @@ def _summarize_one(doc, ask, emit, num_ctx, answer_tokens, map_calls):
         if outcome.status != 'retry':
             outcome.report.update(report)
             if outcome.status == 'unverified':
-                outcome.text = _unverified_summary(doc, prefix)
+                outcome.text = _unverified_summary(doc, prefix, outcome.report, coverage_note)
+            elif outcome.status == 'error':
+                outcome.text = f'{prefix}\n\n{_UNVERIFIED_BANNER}\n\nThe model returned nothing usable, so this is taken directly from the document:\n\n{_extractive_summary(doc)}{coverage_note}'
+                outcome.status = 'unverified'
             return outcome
         feedback = outcome.report['feedback']
-    return Answer(_unverified_summary(doc, prefix), 'unverified', report)
+    return Answer(_unverified_summary(doc, prefix, report, coverage_note), 'unverified', report)
 
 
-def _unverified_summary(doc, prefix):
-    lead = []
-    for chunk in doc.body_chunks()[:3]:
-        lead.append(f'- {doc.cite(chunk.page)} "{chunk.text[:300].strip()}…"')
-    return (f'{prefix}\n\nI could not write a summary of this document that I can verify against its text, so I am not presenting one as fact. '
-            'The opening passages of the document are:\n' + '\n'.join(lead))
+_UNVERIFIED_BANNER = ('> **Could not be fully fact-checked.** Some or all of the statements below could not be matched to the text of the document. '
+                      'Treat this summary as a reading aid and check it against the source before relying on it.')
+
+
+def _extractive_summary(doc):
+    """A summary assembled from the document's own words (abstract and concluding passages), so it is grounded by construction."""
+    chunks = doc.body_chunks()
+    picks = [c for c in chunks if _role(c.section) in ('abstract', 'conclusion')][:3] or chunks[:3]
+    lines = []
+    for chunk in picks:
+        sentences = re.split(r'(?<=[.!?])\s+', chunk.text)
+        lines.append(f"- {' '.join(sentences[:3])} {doc.cite(chunk.page)}")
+    return '\n'.join(lines)
+
+
+def _unverified_summary(doc, prefix, report, coverage_note=''):
+    """Always returns a summary. A draft that failed verification is shown with its unsupported sentences marked; a draft that
+    describes some other paper (a source mismatch) is not shown at all and is replaced by the document's own abstract and conclusions."""
+    draft = (report or {}).get('draft', '')
+    flagged = (report or {}).get('flagged_sentences', [])
+    if draft and not (report or {}).get('mismatch'):
+        marked = draft
+        for sentence in flagged:
+            clean = parse_citations(sentence)[0]
+            marked = marked.replace(sentence.strip(), f'⚠ *unverified:* {sentence.strip()}', 1) if sentence.strip() in marked else marked
+        return f'{prefix}\n\n{_UNVERIFIED_BANNER}\n\n{marked}{coverage_note}'
+    return (f'{prefix}\n\n{_UNVERIFIED_BANNER}\n\nThe generated summary described content that is not in this document, so it was discarded. '
+            f'Instead, here are the document\'s own abstract and concluding passages:\n\n{_extractive_summary(doc)}{coverage_note}')
 
 
 def _page_ranges(pages):

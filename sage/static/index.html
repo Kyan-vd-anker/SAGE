@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Sage · Local Assistant</title><link rel="stylesheet" href="/static/style.css?v=settings-layout-1">
-<link rel="stylesheet" href="/static/studio.css?v=1">
+<link rel="stylesheet" href="/static/studio.css?v=2">
   
 </head>
 <body>
@@ -29,6 +29,7 @@
 <span id="studioSaved" class="meta"></span>
 <button id="studioSave">Save</button>
 <button id="studioImport">Import</button><input id="studioFile" type="file" accept=".pdf,.docx,.xlsx,.csv,.tsv,.tex,.md,.txt" hidden>
+<button id="studioReadPaper" title="Sage reads a paper and makes a document with its important parts">Read a paper</button><input id="studioPaperFile" type="file" accept=".pdf,.docx,.txt,.md" hidden>
 <select id="studioExport" aria-label="Export"></select>
 <button id="studioCompile" class="hidden">Compile PDF</button>
 <button id="studioPreviewBtn" class="hidden">Preview</button>
@@ -47,7 +48,17 @@
 <div id="studioSheet" class="hidden"><div id="sheetBar"><b id="sheetRef">A1</b><input id="sheetInput" aria-label="Cell content or formula" placeholder="Value or =formula" autocomplete="off"><button id="sheetMore">+ rows</button></div><div id="sheetScroll" tabindex="0"><table id="sheetGrid"></table></div></div>
 <div id="studioPreview" class="hidden"></div>
 </div>
-<aside id="studioNotes"><h3>Notes <span id="studioCount"></span></h3><p id="studioHint" class="meta"></p><div id="studioNoteList"></div></aside>
+<aside id="studioNotes">
+<div id="studioTabs" role="tablist"><button id="tabNotes" class="on" role="tab">Notes <span id="studioCount"></span></button><button id="tabAssist" role="tab">Assistant</button></div>
+<div id="readProgress" class="meta hidden" role="status"></div>
+<div id="notesPanel"><p id="studioHint" class="meta"></p><div id="studioNoteList"></div></div>
+<div id="assistPanel" class="hidden">
+<select id="assistScope" aria-label="What to ask about"><option value="draft">Ask about my draft</option><option value="source">Ask about the paper I read</option></select>
+<div id="assistChat" aria-live="polite"></div>
+<div id="assistRow"><input id="assistQ" placeholder="Ask a question, or say: I'm going to write a paper about…" maxlength="2000" aria-label="Question"><button id="assistAsk">Ask</button></div>
+<details id="assistLayout"><summary>Describe a paper to get a first layout</summary><textarea id="layoutDesc" rows="5" maxlength="6000" placeholder="What is the paper about? What do you want to show or cover?"></textarea><div class="row"><select id="layoutKind" aria-label="Layout type"><option value="latex">LaTeX</option><option value="doc">Document</option></select><button id="layoutMake">Make first layout</button></div></details>
+</div>
+</aside>
 </div>
 </section>
 <section id="page-system" class="page"><div class="sectionHead"><div><h2>Kali PC controls</h2><p>Live desktop access, local models, and the system features Sage can use.</p></div><button id="refreshSystemHealth" class="softBtn">Refresh status</button></div><div class="safetyNotice">Sage can act on the Kali desktop and files in your home folder. Software installs and changes to Sage's own files require approval. Review what is open before asking Sage to type or click.</div><div id="systemHealth" class="cards"></div><h3 class="subhead">Telegram phone connection</h3><div id="telegramPanel" class="cards"></div><h3 class="subhead">Live Kali desktop</h3><button id="inspectPcScreen" class="primary">Inspect current screen</button><div id="pcScreenResult" class="cards" style="margin-top:12px"></div><h3 class="subhead">How to use it</h3><article class="card"><p>In Chat, ask Sage to inspect the screen and do one concrete task. Sage checks the screen before acting and after each action. Press Stop in Chat to end the action loop. Sage will not operate a visible system installer or privilege dialog; use an approved install request for software.</p></article></section>
@@ -87,4 +98,4 @@
 <section id="page-decisions" class="page"><div class="sectionHead"><div><h2>Decision log</h2><p>Record chosen options, alternatives, and why.</p></div></div><form id="decisionForm" class="formCard"><select name="project_id" id="decisionProject"><option value="">No linked project</option></select><input name="title" placeholder="Decision" required><textarea name="decision" placeholder="Chosen option" required></textarea><textarea name="alternatives" placeholder="Alternatives considered"></textarea><textarea name="rationale" placeholder="Reasoning"></textarea><input name="source" placeholder="Source or discussion reference"><button class="primary">Save decision</button></form><div id="decisionList" class="cards"></div></section>
 <section id="page-session-review" class="page"><div class="sectionHead"><div><h2>Session review</h2><p>Drafts are prepared in the background. Review and approve each one before it is saved.</p></div></div><select id="summaryProject"><option value="">Whole session</option></select><button id="draftSummary" class="primary">Draft summary now</button><div id="summaryList" class="cards"></div></section>
 <section id="page-backups" class="page"><div class="sectionHead"><div><h2>Backups</h2><p>Create a local archive of Sage data and restore a saved archive.</p></div><button id="createBackup" class="primary">Create backup</button></div><div id="backupList" class="cards"></div></section>
-<div id="toast" class="toast"></div></main><script src="/static/app.js?v=files-6"></script><script src="/static/planner.js?v=planner-5"></script><script src="/static/ring-state.js?v=2"></script><script src="/static/agent-drawer.js?v=2"></script><script src="/static/service-status.js?v=1"></script><script src="/static/sheet-engine.js?v=1"></script><script src="/static/studio.js?v=1"></script></body></html>
+<div id="toast" class="toast"></div></main><script src="/static/app.js?v=files-6"></script><script src="/static/planner.js?v=planner-5"></script><script src="/static/ring-state.js?v=2"></script><script src="/static/agent-drawer.js?v=2"></script><script src="/static/service-status.js?v=1"></script><script src="/static/sheet-engine.js?v=1"></script><script src="/static/studio.js?v=2"></script></body></html>

@@ -44,6 +44,11 @@ TEMPLATES = {
 def _ensure():
     db.execute("CREATE TABLE IF NOT EXISTS studio_docs(id INTEGER PRIMARY KEY, kind TEXT NOT NULL, title TEXT NOT NULL, "
                "content TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
+    # papers the user asked Sage to read: the extracted pages stay on this machine so the paper can be questioned later
+    db.execute("CREATE TABLE IF NOT EXISTS studio_sources(id INTEGER PRIMARY KEY, doc_id TEXT NOT NULL UNIQUE, name TEXT NOT NULL, "
+               "unit TEXT NOT NULL, pages TEXT NOT NULL, created_at TEXT NOT NULL)")
+    if 'source_id' not in {row['name'] for row in db.rows('PRAGMA table_info(studio_docs)')}:
+        db.execute('ALTER TABLE studio_docs ADD COLUMN source_id INTEGER')
 
 
 def _check_kind(kind):
@@ -63,24 +68,30 @@ def _check_content(kind, content):
 
 def list_docs():
     _ensure()
-    return db.rows('SELECT id,kind,title,updated_at,LENGTH(content) AS size FROM studio_docs ORDER BY updated_at DESC,id DESC')
+    return db.rows('SELECT id,kind,title,updated_at,source_id,LENGTH(content) AS size FROM studio_docs ORDER BY updated_at DESC,id DESC')
 
 
 def get_doc(doc_id):
     _ensure()
-    rows = db.rows('SELECT id,kind,title,content,created_at,updated_at FROM studio_docs WHERE id=?', (int(doc_id),))
+    rows = db.rows('SELECT id,kind,title,content,source_id,created_at,updated_at FROM studio_docs WHERE id=?', (int(doc_id),))
     if not rows:
         raise ValueError('Document not found')
     return rows[0]
 
 
-def create_doc(kind, title='', content=None):
+def create_doc(kind, title='', content=None, source_id=None):
     _ensure()
     kind = _check_kind(kind)
     title = (str(title or '').strip() or 'Untitled')[:120]
     body = _check_content(kind, TEMPLATES[kind] if content is None else content)
+    if source_id in (None, ''):
+        source_id = None
+    elif not db.rows('SELECT id FROM studio_sources WHERE id=?', (_int(source_id, 'source_id'),)):
+        raise ValueError('That paper is no longer stored')
+    else:
+        source_id = int(source_id)
     stamp = db.now()
-    doc_id = db.execute('INSERT INTO studio_docs(kind,title,content,created_at,updated_at) VALUES(?,?,?,?,?)', (kind, title, body, stamp, stamp))
+    doc_id = db.execute('INSERT INTO studio_docs(kind,title,content,source_id,created_at,updated_at) VALUES(?,?,?,?,?,?)', (kind, title, body, source_id, stamp, stamp))
     return get_doc(doc_id)
 
 
@@ -95,6 +106,8 @@ def save_doc(doc_id, title=None, content=None):
 def delete_doc(doc_id):
     doc = get_doc(doc_id)
     db.execute('DELETE FROM studio_docs WHERE id=?', (doc['id'],))
+    # a stored paper that no document points at any more is removed too
+    db.execute('DELETE FROM studio_sources WHERE id NOT IN (SELECT source_id FROM studio_docs WHERE source_id IS NOT NULL)')
     return {'ok': True, 'id': doc['id']}
 
 
@@ -807,12 +820,16 @@ def route_get(path, q):
     if path == '/api/studio/status':
         engine = tex_engine()
         return True, {'latex_engine': Path(engine).name if engine else None, 'speaker_room': config.SPEAKER_ROOM}
+    match = re.fullmatch(r'/api/studio/paper/job/([0-9a-f]{6,32})', path)
+    if match:
+        from . import paper_assistant
+        return True, paper_assistant.job_status(match.group(1))
     return False, None
 
 
 def route_post(path, body):
     if path == '/api/studio/doc':
-        return True, create_doc(body.get('kind'), body.get('title', ''), body.get('content'))
+        return True, create_doc(body.get('kind'), body.get('title', ''), body.get('content'), body.get('source_id'))
     match = re.fullmatch(r'/api/studio/doc/(\d+)', path)
     if match:
         return True, save_doc(int(match.group(1)), body.get('title'), body.get('content'))
@@ -823,6 +840,20 @@ def route_post(path, body):
         return True, review(body.get('kind'), body.get('content'), body.get('focus'), body.get('values'), body.get('speak', 'off'))
     if path == '/api/studio/compile':
         return True, compile_latex(body.get('content'))
+    if path == '/api/studio/layout':
+        from . import paper_assistant
+        return True, paper_assistant.make_layout(body.get('description'), body.get('kind', 'latex'), body.get('title', ''), body.get('source_id'))
+    if path == '/api/studio/ask':
+        from . import paper_assistant
+        return True, paper_assistant.ask(body.get('question'), body.get('kind'), body.get('title', ''), body.get('content', ''),
+                                         body.get('source_id'), body.get('scope'))
+    if path == '/api/studio/paper/read':
+        from . import paper_assistant
+        try:
+            data = base64.b64decode(str(body.get('data_b64') or ''), validate=True)
+        except ValueError:
+            raise ValueError('The file data is not valid')
+        return True, paper_assistant.start_read(body.get('filename'), data)
     if path == '/api/studio/export':
         filename, mime, data = export_file(body.get('kind'), body.get('title'), body.get('content'), body.get('format'))
         return True, {'filename': filename, 'mime': mime, 'data_b64': base64.b64encode(data).decode()}

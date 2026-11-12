@@ -11,7 +11,8 @@
 
   const S = { inited: false, docs: [], doc: null, notes: [], dismissed: new Set(), counter: 0, from: null, to: 0, prevLines: 1,
               saveTimer: null, reviewTimer: null, reviewing: false, cells: {}, values: {}, sel: 'A1', rows: 40, changed: new Set(),
-              pdfUrl: null, engine: undefined, room: 'bedroom', dirty: false };
+              pdfUrl: null, engine: undefined, room: 'bedroom', dirty: false, chats: {}, tab: 'notes', asking: false, reading: false };
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
   async function call(url, body) {
     const r = await fetch(url, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : { cache: 'no-store' });
@@ -64,12 +65,13 @@
     }
     el('studioDocs').value = String(id);
     el('studioTitle').value = S.doc.title;
+    el('assistScope').value = S.doc.source_id ? 'source' : 'draft';
     setSaved('Saved');
     render();
   }
 
-  async function createDoc(kind, title, content) {
-    const doc = await call('/api/studio/doc', { kind, title, content });
+  async function createDoc(kind, title, content, sourceId) {
+    const doc = await call('/api/studio/doc', { kind, title, content, source_id: sourceId || null });
     await loadDocs(doc.id);
     await openDoc(doc.id);
   }
@@ -109,6 +111,7 @@
     if (kind !== 'latex' && kind !== 'doc') hidePreview();
     if (kind === 'sheet') renderSheet(); else if (isText()) { renderText(); if (el('studioPreview').dataset.mode === 'doc') renderDocPreview(); }
     renderNotes();
+    renderAssist();
   }
 
   // ------------------------------------------------------------------ text editor (LaTeX and documents)
@@ -284,7 +287,8 @@
       if (line.trim().startsWith('```')) { close(); out.push(code ? '</pre>' : '<pre>'); code = !code; continue; }
       if (code) { out.push(esc(line) + '\n'); continue; }
       let m;
-      if ((m = /^(#{1,6})\s+(.*)/.exec(line))) { close(); out.push(`<h${m[1].length}>${inline(m[2])}</h${m[1].length}>`); }
+      if ((m = /^>\s?(.*)/.exec(line))) { close(); if (m[1].trim()) out.push(`<blockquote><p>${inline(m[1])}</p></blockquote>`); }
+      else if ((m = /^(#{1,6})\s+(.*)/.exec(line))) { close(); out.push(`<h${m[1].length}>${inline(m[2])}</h${m[1].length}>`); }
       else if ((m = /^\s*[-*+]\s+(.*)/.exec(line))) { if (list !== 'ul') { close(); out.push('<ul>'); list = 'ul'; } out.push(`<li>${inline(m[1])}</li>`); }
       else if ((m = /^\s*\d+[.)]\s+(.*)/.exec(line))) { if (list !== 'ol') { close(); out.push('<ol>'); list = 'ol'; } out.push(`<li>${inline(m[1])}</li>`); }
       else if (!line.trim()) close();
@@ -412,6 +416,130 @@
     } catch (e) { say(e.message); }
   }
 
+  // ------------------------------------------------------------------ assistant: reading papers, first layouts, questions
+
+  const chatOf = () => { const key = S.doc ? S.doc.id : 0; return (S.chats[key] = S.chats[key] || []); };
+
+  function setTab(tab) {
+    S.tab = tab;
+    el('tabNotes').classList.toggle('on', tab === 'notes');
+    el('tabAssist').classList.toggle('on', tab === 'assist');
+    el('notesPanel').classList.toggle('hidden', tab !== 'notes');
+    el('assistPanel').classList.toggle('hidden', tab !== 'assist');
+    if (tab === 'assist') renderAssist();
+  }
+
+  function layoutCard(layout, index) {
+    const note = (layout.notes || []).map(n => `<p class="meta">${esc(n)}</p>`).join('');
+    return `<div class="layoutCard"><b>${esc(layout.title)}</b><ol>${layout.sections.map(s => `<li>${esc(s.heading)}</li>`).join('')}</ol>${note}`
+      + `<div class="na"><button data-act="open-latex" data-i="${index}">Open as LaTeX</button><button data-act="open-doc" data-i="${index}">Open as document</button></div></div>`;
+  }
+
+  function renderAssist() {
+    const hasSource = !!(S.doc && S.doc.source_id);
+    const scope = el('assistScope');
+    scope.querySelector('option[value="source"]').disabled = !hasSource;
+    if (!hasSource) scope.value = 'draft';
+    el('assistAsk').disabled = el('layoutMake').disabled = S.asking;
+    const messages = chatOf();
+    el('assistChat').innerHTML = messages.length ? messages.map((m, i) => m.role === 'user'
+      ? `<div class="msg user">${esc(m.text)}</div>`
+      : `<div class="msg sage${m.busy ? ' busy' : ''}">${m.busy ? esc(m.text) : markdown(m.text)}${m.layout ? layoutCard(m.layout, i) : ''}</div>`).join('')
+      : `<p class="meta">${S.doc ? (hasSource ? 'Ask anything about the paper you read. It answers only from the paper, with page numbers.' : 'Ask about your draft, or say what you want to write: "I\'m going to write a paper about ...".') : 'Open or create a document first.'}</p>`;
+    el('assistChat').scrollTop = el('assistChat').scrollHeight;
+  }
+
+  async function converse(question, request, placeholder) {
+    if (S.asking) return;
+    const messages = chatOf();
+    messages.push({ role: 'user', text: question });
+    const pending = { role: 'sage', busy: true, text: placeholder };
+    messages.push(pending);
+    S.asking = true;
+    renderAssist();
+    try {
+      Object.assign(pending, await request(), { busy: false });
+    } catch (e) {
+      Object.assign(pending, { busy: false, text: `Sorry, that did not work: ${e.message}` });
+    } finally {
+      S.asking = false;
+      renderAssist();
+    }
+  }
+
+  function ask() {
+    const input = el('assistQ');
+    const question = input.value.trim();
+    if (!question) return;
+    if (!S.doc) { say('Open or create a document first'); return; }
+    input.value = '';
+    const sourceId = S.doc.source_id || null;
+    converse(question, async () => {
+      const res = await call('/api/studio/ask', { question, kind: S.doc.kind, title: el('studioTitle').value, source_id: sourceId,
+        scope: el('assistScope').value, content: isText() ? area().value : '' });
+      return { text: res.answer, status: res.status, layout: res.layout || null, sourceId: res.layout && res.layout.built_on ? sourceId : null };
+    }, 'Sage is reading…');
+  }
+
+  function makeLayout() {
+    const description = el('layoutDesc').value.trim();
+    if (description.length < 15) { say('Describe the paper in a sentence or two first'); return; }
+    const sourceId = S.doc ? S.doc.source_id || null : null;
+    el('assistLayout').open = false;
+    converse(description, async () => {
+      const layout = await call('/api/studio/layout', { description, kind: el('layoutKind').value, source_id: sourceId });
+      return { text: `Here is a first layout: "${layout.title}", ${layout.sections.length} sections, each with what to write about.`, status: 'layout', layout, sourceId: layout.built_on ? sourceId : null };
+    }, 'Sage is planning the layout…');
+  }
+
+  async function onChatClick(e) {
+    const button = e.target.closest('button[data-act]');
+    if (!button) return;
+    const message = chatOf()[parseInt(button.dataset.i, 10)];
+    if (!message || !message.layout) return;
+    const kind = button.dataset.act === 'open-latex' ? 'latex' : 'doc';
+    try {
+      await createDoc(kind, message.layout.title, message.layout.contents[kind], message.sourceId);
+      setTab('assist');
+      say('Layout opened');
+    } catch (err) { say(err.message); }
+  }
+
+  function showProgress(text) { const box = el('readProgress'); box.textContent = text; box.classList.remove('hidden'); }
+
+  async function readPaper(file) {
+    if (!file || S.reading) return;
+    if (file.size > 8_000_000) { say('Papers must be 8 MB or smaller'); return; }
+    S.reading = true;
+    el('studioReadPaper').disabled = true;
+    showProgress(`Uploading ${file.name}…`);
+    try {
+      const started = await call('/api/studio/paper/read', { filename: file.name, data_b64: toBase64(await file.arrayBuffer()) });
+      let job = null;
+      for (let waited = 0; waited < 2400; waited += 2) {      // up to 80 minutes: a long paper on a local model is slow
+        await sleep(2000);
+        job = await call(`/api/studio/paper/job/${started.job_id}`);
+        if (job.progress) showProgress(job.progress);
+        if (job.state !== 'running') break;
+      }
+      if (!job || job.state === 'running') throw new Error('Reading is taking too long. Try a smaller file.');
+      if (job.state === 'error') throw new Error(job.error || 'Sage could not read this paper');
+      const result = job.result;
+      await createDoc('doc', result.title, result.content, result.source_id);
+      const name = result.paper.title || result.paper.name;
+      S.chats[S.doc.id] = [{ role: 'sage', text: `I read **${name}** and made this document with its important parts. Ask me anything about the paper here, or tell me "I'm going to write a paper about this" and I will make a first layout.`
+        + (result.status === 'unverified' ? ' Some statements could not be fact-checked against the paper; they are marked in the document.' : '') }];
+      setTab('assist');
+      say('Paper read');
+    } catch (e) {
+      say(e.message);
+    } finally {
+      S.reading = false;
+      el('studioReadPaper').disabled = false;
+      el('readProgress').classList.add('hidden');
+    }
+  }
+
   // ------------------------------------------------------------------ setup
 
   function bind() {
@@ -441,6 +569,14 @@
     el('studioFile').onchange = e => { doImport(e.target.files[0]); e.target.value = ''; };
     el('studioExport').onchange = e => { doExport(e.target.value); e.target.value = ''; };
     el('studioNoteList').onclick = onNoteClick;
+    el('tabNotes').onclick = () => setTab('notes');
+    el('tabAssist').onclick = () => setTab('assist');
+    el('studioReadPaper').onclick = () => el('studioPaperFile').click();
+    el('studioPaperFile').onchange = e => { readPaper(e.target.files[0]); e.target.value = ''; };
+    el('assistAsk').onclick = ask;
+    el('assistQ').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(); } });
+    el('layoutMake').onclick = makeLayout;
+    el('assistChat').onclick = onChatClick;
     el('studioEvery').onchange = () => { try { localStorage.setItem('studioEvery', String(every())); } catch { /* ignore */ } renderNotes(); };
     el('studioSpeak').onchange = () => { try { localStorage.setItem('studioSpeak', el('studioSpeak').value); } catch { /* ignore */ } };
     el('sheetGrid').onclick = e => { const td = e.target.closest('td[data-ref]'); if (td) { select(td.dataset.ref); el('sheetScroll').focus(); } };
@@ -470,7 +606,7 @@
     await openDoc(target ? target.id : null);
   }
 
-  window.SageStudio = { init, state: S, markdown, review, renderNotes };
+  window.SageStudio = { init, state: S, markdown, review, renderNotes, ask, makeLayout, readPaper };
   const startup = () => {
     const button = document.querySelector('nav button[data-page="studio"]');
     if (button) button.addEventListener('click', () => init().catch(e => say(e.message)));

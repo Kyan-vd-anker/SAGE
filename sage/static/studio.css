@@ -67,3 +67,30 @@
 .docPreview h1,.docPreview h2,.docPreview h3{margin:1em 0 .4em}
 .docPreview pre,.docPreview code{background:var(--border);border-radius:6px}
 .docPreview pre{padding:10px;overflow:auto}
+.docPreview blockquote{margin:.6em 0;padding:.2em 12px;border-left:3px solid var(--border);color:var(--muted)}
+.docPreview blockquote p{margin:.3em 0}
+
+/* tabs and assistant */
+#studioTabs{display:flex;gap:6px;margin-bottom:8px}
+#studioTabs button{flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:8px;background:transparent;color:var(--text);font:inherit;cursor:pointer}
+#studioTabs button.on{background:var(--border);font-weight:600}
+#notesPanel.hidden,#assistPanel.hidden,#readProgress.hidden{display:none}
+#readProgress{margin:0 0 8px;padding:8px 10px;border:1px dashed var(--border);border-radius:8px}
+#assistPanel{display:flex;flex-direction:column;gap:8px}
+#assistScope,#assistQ,#layoutDesc,#layoutKind{box-sizing:border-box;padding:7px 9px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font:inherit}
+#assistScope,#assistQ,#layoutDesc{width:100%}
+#assistChat{display:flex;flex-direction:column;gap:8px;max-height:46vh;overflow:auto}
+.msg{padding:8px 10px;border-radius:10px;border:1px solid var(--border);font-size:14px;line-height:1.45;overflow-wrap:anywhere}
+.msg.user{align-self:flex-end;background:var(--border);max-width:92%}
+.msg.sage p,.msg.sage ul,.msg.sage ol{margin:.3em 0}
+.msg.sage.busy{color:var(--muted);font-style:italic}
+.msg .layoutCard{margin-top:6px;padding:8px;border:1px solid var(--border);border-radius:8px}
+.msg .layoutCard ol{margin:4px 0;padding-left:18px}
+.msg .layoutCard .na{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+#assistRow{display:flex;gap:6px}
+#assistRow input{flex:1;min-width:0}
+#assistPanel button,#assistLayout button{padding:6px 11px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font:inherit;cursor:pointer}
+#assistPanel button:disabled{opacity:.5;cursor:default}
+#assistLayout summary{cursor:pointer;color:var(--muted)}
+#assistLayout[open] summary{margin-bottom:6px}
+#assistLayout .row{display:flex;gap:6px;margin-top:6px}
