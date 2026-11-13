@@ -33,7 +33,7 @@ SPEAKER_ROOM = os.getenv("SAGE_SPEAKER_ROOM", "bedroom")  # the room the speaker
 # (prompt + reply); Sage sizes every document prompt to fit inside it instead of letting Ollama silently truncate.
 DOC_MODEL = os.getenv("SAGE_DOC_MODEL", REASONING_MODEL)
 DOC_NUM_CTX = int(os.getenv("SAGE_DOC_NUM_CTX", "8192"))
-DOC_MAP_MAX_CALLS = int(os.getenv("SAGE_DOC_MAP_MAX_CALLS", "8"))  # model passes used to read a document too long for one window
+DOC_MAP_MAX_CALLS = int(os.getenv("SAGE_DOC_MAP_MAX_CALLS", "16"))  # model passes used to read a document too long for one window
 STUDIO_MODEL = os.getenv("SAGE_STUDIO_MODEL", "")  # model that reviews Studio text; empty = fast lane for documents, deep lane for LaTeX and sheets
 LOGIN_EXEMPT_IPS = {item.strip() for item in os.getenv("SAGE_LOGIN_EXEMPT_IPS", "").split(",") if item.strip()}  # devices that skip the login (e.g. wall display); empty by default
 HA_TOKEN = os.getenv("SAGE_HA_TOKEN", "")

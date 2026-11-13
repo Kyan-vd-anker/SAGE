@@ -46,7 +46,9 @@ def _ensure():
                "content TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
     # papers the user asked Sage to read: the extracted pages stay on this machine so the paper can be questioned later
     db.execute("CREATE TABLE IF NOT EXISTS studio_sources(id INTEGER PRIMARY KEY, doc_id TEXT NOT NULL UNIQUE, name TEXT NOT NULL, "
-               "unit TEXT NOT NULL, pages TEXT NOT NULL, created_at TEXT NOT NULL)")
+               "unit TEXT NOT NULL, pages TEXT NOT NULL, meta TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL)")
+    if 'meta' not in {row['name'] for row in db.rows('PRAGMA table_info(studio_sources)')}:
+        db.execute("ALTER TABLE studio_sources ADD COLUMN meta TEXT NOT NULL DEFAULT '{}'")
     if 'source_id' not in {row['name'] for row in db.rows('PRAGMA table_info(studio_docs)')}:
         db.execute('ALTER TABLE studio_docs ADD COLUMN source_id INTEGER')
 
@@ -727,17 +729,23 @@ def extract_pdf_pages(data):
     except ImportError:
         raise ValueError('PDF import requires the optional pypdf package')
     try:
-        reader = PdfReader(io.BytesIO(data))
-        if len(reader.pages) > MAX_PDF_PAGES:
-            raise ValueError(f'PDF has more than {MAX_PDF_PAGES} pages')
-        pages = [page.extract_text() or '' for page in reader.pages]
-        meta = {}
+        from . import pdftext
         try:
-            info = reader.metadata
-            if info:
-                meta = {'title': str(info.title or ''), 'author': str(info.author or ''), 'created': str(info.get('/CreationDate') or '')}
-        except Exception:
+            pages, meta = pdftext.extract(data, MAX_PDF_PAGES)
+        except ValueError:
+            raise
+        except Exception:                      # layout analysis failed: fall back to plain extraction
+            reader = PdfReader(io.BytesIO(data))
+            if len(reader.pages) > MAX_PDF_PAGES:
+                raise ValueError(f'PDF has more than {MAX_PDF_PAGES} pages')
+            pages = [page.extract_text() or '' for page in reader.pages]
             meta = {}
+            try:
+                info = reader.metadata
+                if info:
+                    meta = {'title': str(info.title or ''), 'author': str(info.author or ''), 'created': str(info.get('/CreationDate') or '')}
+            except Exception:
+                meta = {}
     except ValueError:
         raise
     except Exception:

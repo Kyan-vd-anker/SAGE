@@ -54,7 +54,7 @@ def summarizer(messages, max_tokens):
             sentence = re.split(r'(?<=[.!?])\s', text)[0][:170]
             lines.append(f'- [{label} p.{page}] [own] {sentence}')
         return '\n'.join(lines)
-    notes = re.findall(r'(?m)^- \[(D\d+) p\.(\d+)\] \((\w+)\) (.+)$', user)
+    notes = re.findall(r'(?m)^- \[(D\d+) p\.(\d+)\] \((\w+)(?:\|\w+)?\) (.+)$', user)
     if notes:
         return '\n'.join(f'{fact} [{label} p.{page}]' for label, page, _, fact in notes[:6])
     return '\n'.join(f'{re.split(r"(?<=[.!?])\s", text)[0]} [{label} p.{page}]' for label, page, text in passages[:5])
@@ -347,7 +347,8 @@ class SummaryTests(Corpus):
     def test_long_documents_are_read_in_windows_and_the_coverage_is_reported(self):
         with patch.object(config, 'DOC_MAP_MAX_CALLS', 2):
             answer = docqa.respond('Summarize this paper.', [self.lcp], FakeModel(summarizer), num_ctx=4096, answer_tokens=1000)
-        self.assertIn('Pages not analysed', answer.text)
+        self.assertIn('Coverage:', answer.text)
+        self.assertIn('Not analysed:', answer.text)
         self.assertTrue(answer.report['documents'][0]['pages_not_analysed'])
 
     def test_two_documents_in_one_conversation_never_share_prompts(self):

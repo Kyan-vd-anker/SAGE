@@ -31,6 +31,7 @@ static esp_bd_addr_t airpods_address;
 static bool airpods_found;
 static bool a2dp_connected;
 static bool hfp_connected;
+static bool hfp_connecting;
 static bool scanning;
 static char airpods_name[ESP_BT_GAP_MAX_BDNAME_LEN + 1];
 typedef struct {
@@ -41,12 +42,45 @@ typedef struct {
 static discovered_device_t devices[MAX_DISCOVERED_DEVICES];
 static size_t device_count;
 
-static void set_push_to_talk(bool active)
+static esp_err_t connect_hfp_once(esp_bd_addr_t address)
 {
     xSemaphoreTake(state_lock, portMAX_DELAY);
+    if (hfp_connected || hfp_connecting) {
+        xSemaphoreGive(state_lock);
+        return ESP_OK;
+    }
+    hfp_connecting = true;
+    xSemaphoreGive(state_lock);
+
+    esp_err_t err = esp_hf_ag_slc_connect(address);
+    if (err != ESP_OK) {
+        xSemaphoreTake(state_lock, portMAX_DELAY);
+        hfp_connecting = false;
+        xSemaphoreGive(state_lock);
+    }
+    return err;
+}
+
+static void set_push_to_talk(bool active)
+{
+    bool connect_hfp = false;
+    esp_bd_addr_t address;
+    xSemaphoreTake(state_lock, portMAX_DELAY);
     push_to_talk = active;
+    if (active && airpods_found && !hfp_connected) {
+        memcpy(address, airpods_address, sizeof(address));
+        connect_hfp = true;
+    }
     xSemaphoreGive(state_lock);
     ESP_LOGI(TAG, "push-to-talk %s", active ? "started" : "stopped");
+    if (connect_hfp) {
+        /* SLC connection is asynchronous. The HFP callback opens SCO only after
+         * ESP_HF_CONNECTION_STATE_SLC_CONNECTED arrives. */
+        esp_err_t err = connect_hfp_once(address);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "could not reconnect HFP for push-to-talk: %s", esp_err_to_name(err));
+        }
+    }
 }
 
 static void set_status_state(void)
@@ -177,7 +211,7 @@ bool bt_audio_connect_device(const char *address)
 #if SAGE_BT_A2DP
     a2dp_err = esp_a2d_source_connect(device_address);
 #endif
-    esp_err_t hfp_err = esp_hf_ag_slc_connect(device_address);
+    esp_err_t hfp_err = connect_hfp_once(device_address);
     if (a2dp_err != ESP_OK || hfp_err != ESP_OK) {
         ESP_LOGE(TAG, "Bluetooth connect failed: A2DP=%s HFP=%s",
                  esp_err_to_name(a2dp_err), esp_err_to_name(hfp_err));
@@ -238,10 +272,15 @@ static void hfp_callback(esp_hf_cb_event_t event, esp_hf_cb_param_t *param)
 {
     if (event == ESP_HF_CONNECTION_STATE_EVT) {
         xSemaphoreTake(state_lock, portMAX_DELAY);
-        hfp_connected = param->conn_stat.state >= ESP_HF_CONNECTION_STATE_CONNECTED;
+        hfp_connected = param->conn_stat.state == ESP_HF_CONNECTION_STATE_CONNECTED ||
+                        param->conn_stat.state == ESP_HF_CONNECTION_STATE_SLC_CONNECTED;
+        hfp_connecting = param->conn_stat.state != ESP_HF_CONNECTION_STATE_DISCONNECTED;
         set_status_state();
         xSemaphoreGive(state_lock);
         ESP_LOGI(TAG, "HFP state %d", param->conn_stat.state);
+        if (param->conn_stat.state == ESP_HF_CONNECTION_STATE_DISCONNECTED) {
+            set_push_to_talk(false);
+        }
         if (param->conn_stat.state == ESP_HF_CONNECTION_STATE_SLC_CONNECTED) {
             /* The service-level connection is up: open the SCO voice/mic link ourselves.
              * The headset will not do it for an audio gateway that stays silent. */
@@ -335,7 +374,10 @@ static void gap_callback(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *par
 #if SAGE_BT_A2DP
             esp_a2d_source_connect(airpods_address);
 #endif
-            esp_hf_ag_slc_connect(airpods_address);
+            esp_err_t err = connect_hfp_once(airpods_address);
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "could not connect HFP after discovery: %s", esp_err_to_name(err));
+            }
         } else {
             ESP_LOGI(TAG, "Bluetooth discovery complete; no AirPods found");
         }

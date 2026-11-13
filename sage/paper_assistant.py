@@ -109,20 +109,24 @@ def _save_source(doc):
     if found:
         db.execute('UPDATE studio_sources SET name=? WHERE id=?', (doc.name, found[0]['id']))
         return found[0]['id']
-    return db.execute('INSERT INTO studio_sources(doc_id,name,unit,pages,created_at) VALUES(?,?,?,?,?)',
-                      (doc.doc_id, doc.name, doc.unit, json.dumps(doc.pages), db.now()))
+    return db.execute('INSERT INTO studio_sources(doc_id,name,unit,pages,meta,created_at) VALUES(?,?,?,?,?,?)',
+                      (doc.doc_id, doc.name, doc.unit, json.dumps(doc.pages), json.dumps(doc.pdf_meta), db.now()))
 
 
 def load_source(source_id):
     _ensure()
     try:
-        rows = db.rows('SELECT name,unit,pages FROM studio_sources WHERE id=?', (int(source_id),))
+        rows = db.rows('SELECT name,unit,pages,meta FROM studio_sources WHERE id=?', (int(source_id),))
     except (TypeError, ValueError):
         raise ValueError('source_id must be a number')
     if not rows:
         raise ValueError('That paper is no longer stored. Read it again with "Read a paper".')
     row = rows[0]
-    return docqa.build_document(row['name'], json.loads(row['pages']), row['unit'])
+    try:
+        meta = json.loads(row['meta'] or '{}')
+    except ValueError:
+        meta = {}
+    return docqa.build_document(row['name'], json.loads(row['pages']), row['unit'], meta)
 
 
 def _labels(text):

@@ -30,7 +30,7 @@ import time
 from collections import Counter, OrderedDict
 from dataclasses import dataclass, field
 
-from . import config
+from . import config, pdftext, scidoc
 
 log = logging.getLogger('sage.docqa')
 
@@ -38,6 +38,7 @@ NUM_CTX = config.DOC_NUM_CTX
 MAX_CHUNK_CHARS = 1200
 MIN_COVERAGE = 0.45            # share of (idf-weighted) question terms that must be found for a question to count as answerable
 SUPPORT_THRESHOLD = 0.6        # share of a sentence's distinctive terms that must appear on the page it cites
+INTERPRETATION_THRESHOLD = 0.5 # the same for sentences marked "Interpretation:" (connecting reasoning, still cited and checked)
 MAX_REMOVABLE_RATIO = 0.3      # above this share of unsupported sentences the answer is regenerated instead of trimmed
 CACHE_SIZE = 6
 _CHARS_PER_TOKEN = [3.0]       # conservative; only ever lowered when Ollama reports more tokens than estimated
@@ -191,6 +192,11 @@ class Document:
     label: str = 'D1'
     page_terms: list = field(default_factory=list)
     page_norm: list = field(default_factory=list)
+    page_entities: list = field(default_factory=list)   # acronyms/formulas (PDMS, TiO2, ...) per body page
+    pdf_meta: dict = field(default_factory=dict)        # layout data from extraction: font-sized first-page lines, heading hints
+    structure: dict = field(default_factory=dict)       # captions, tables, equations, sections (see scidoc)
+    warnings: list = field(default_factory=list)        # extraction problems to show the reader
+    headers: list = field(default_factory=list)         # running headers removed from pages 2+
 
     @property
     def n_pages(self):
@@ -269,8 +275,12 @@ def find_reference_start(pages):
     return 0, 0
 
 
-def _is_heading(line):
+def _is_heading(line, hints=None):
     line = line.strip()
+    if re.fullmatch(r'(?i)(review|review article|research article|perspective|communication|letter|full paper|article|mini[- ]?review|short communication)', line):
+        return False                                    # the article-type label printed above the title
+    if hints and 3 <= len(line) <= 90 and line[-1:] not in '.,;' and len(line.split()) <= 14 and re.sub(r'\s+', ' ', line).lower() in hints:
+        return True                                   # large or bold short line in the PDF layout
     if not 3 <= len(line) <= 80 or line[-1] in '.,;:' or len(line.split()) > 10:
         return False
     bare = re.sub(r'^\d+(?:\.\d+){0,2}\.?\s+', '', line)
@@ -282,14 +292,10 @@ def _is_heading(line):
 
 
 def _role(section):
-    lower = section.lower()
-    for name, pattern in _ROLES:
-        if re.search(pattern, lower):
-            return name
-    return ''
+    return scidoc.role(section)
 
 
-def _chunk_page(page_number, text, is_reference, start_index, section):
+def _chunk_page(page_number, text, is_reference, start_index, section, hints=None):
     chunks = []
     buffer = ''
     index = start_index
@@ -305,7 +311,7 @@ def _chunk_page(page_number, text, is_reference, start_index, section):
 
     for paragraph in re.split(r'\n\s*\n|\n(?=(?:\d+(?:\.\d+)*\.?\s+)?[A-Z][^\n]{2,60}\n)', text):
         for line in paragraph.split('\n'):
-            if not is_reference and _is_heading(line):
+            if not is_reference and _is_heading(line, hints):
                 flush()
                 section = re.sub(r'^\d+(?:\.\d+){0,2}\.?\s+', '', line.strip())
                 continue
@@ -321,9 +327,17 @@ def _chunk_page(page_number, text, is_reference, start_index, section):
 def build_document(name, pages, unit='p.', pdf_meta=None):
     """Create a Document from per-page text. `pages` is a list of strings, one per page (or pseudo-page)."""
     raw_pages = list(pages)
-    pages = [_clean_page(p) for p in pages]
+    pages = [pdftext.repair_text(_clean_page(p)) for p in pages]
     if not any(pages):
         raise DocumentError('This document contains no readable text.')
+    quality = pdftext.quality_report(pages) if unit == 'p.' else {'warnings': [], 'severe': False}
+    if quality['severe']:
+        raise DocumentError('The text of this PDF could not be extracted reliably (most pages are empty or garbled). It may be scanned or '
+                            'image-based: run OCR on it first, or upload a text-based version.')
+    headers = []
+    if unit == 'p.':
+        pages, headers = scidoc.strip_running_headers(pages)
+    hints = set((pdf_meta or {}).get('headings') or [])
     digest = hashlib.sha256(('\x1f'.join(pages)).encode('utf-8', 'replace')).hexdigest()
     ref_page, ref_offset = find_reference_start(pages)
     body_pages = []
@@ -339,23 +353,32 @@ def build_document(name, pages, unit='p.', pdf_meta=None):
             body, ref = text, ''
         body_pages.append(body)
         if body.strip():
-            made, index, section = _chunk_page(number, body, False, index, section)
+            made, index, section = _chunk_page(number, body, False, index, section, hints)
             chunks.extend(made)
         if ref.strip():
             made, index, _ = _chunk_page(number, ref, True, index, 'References')
             chunks.extend(made)
-    doc = Document(digest[:16], name, unit, pages, body_pages, chunks, ref_page, dict(pdf_meta or {}))
+    embedded = {k: v for k, v in (pdf_meta or {}).items() if k in ('title', 'author', 'created', 'subject')}
+    doc = Document(digest[:16], name, unit, pages, body_pages, chunks, ref_page, embedded)
+    doc.pdf_meta = dict(pdf_meta or {})
+    doc.headers = headers
+    doc.warnings = quality['warnings']
     doc.page_terms = [set(terms(p)) for p in body_pages]
     for number, raw in enumerate(raw_pages, 1):      # a hyphen at a line end may belong to a compound word: accept both readings
         if not ref_page or number < ref_page:
             doc.page_terms[number - 1] |= set(terms(_clean_page(raw, keep_hyphen=True)))
     doc.page_norm = [_norm(p) for p in body_pages]
+    doc.page_entities = [_entities(p) for p in body_pages]
     if not doc.body_chunks():
         raise DocumentError('No readable body text was found in this document.')
+    doc.structure = scidoc.analyse(body_pages, doc.chunks)
     doc.meta = {**doc.meta, **identify(doc)}
     _event('ingest', doc_id=doc.doc_id, name=name, sha256=digest[:12], pages=len(pages), chars=sum(len(p) for p in pages),
            chunks=len(chunks), body_chunks=len(doc.body_chunks()), reference_start_page=ref_page,
-           title=doc.meta.get('title'), authors=doc.meta.get('authors'), year=doc.meta.get('year'), type=doc.meta.get('type'))
+           title=doc.meta.get('title'), authors=doc.meta.get('authors'), year=doc.meta.get('year'), type=doc.meta.get('type'),
+           journal=doc.meta.get('journal'), doi=doc.meta.get('doi'), sections=len(doc.structure['sections']),
+           captions=len(doc.structure['captions']), tables=len(doc.structure['tables']), equations=len(doc.structure['equations']),
+           warnings=doc.warnings, two_column_pages=doc.pdf_meta.get('columns'), layout=doc.pdf_meta.get('layout'))
     return doc
 
 
@@ -435,10 +458,14 @@ _NAME_PARTICLES = {'and', 'de', 'van', 'von', 'der', 'den', 'la', 'le', 'di', 'd
 
 
 def _looks_like_authors(line):
+    if line.rstrip().endswith(':'):
+        return False
     stripped = re.sub(r'[\d*†‡§¶#]+', '', line).replace('&', ',')
     if not 5 <= len(stripped) <= 260 or not re.search(r',|\band\b', stripped):
         return False
     words = [w for w in re.split(r'[\s,]+', stripped) if w]
+    if ',' not in stripped and len(words) > 7:                                  # a long Title Case phrase with 'and' is a title, not names
+        return False
     if len(words) < 2 or any(w.lower() in _LOWER_WORDS for w in words):
         return False
     capitalised = [w for w in words if w[0].isupper() or w.lower() in _NAME_PARTICLES]
@@ -463,14 +490,15 @@ def identify(doc):
     title = authors = None
     group = []
     author_lines = []
+    header_norms = {scidoc._norm(h) for h in doc.headers}
     for line in lines:
         if re.match(r'(?i)^(abstract|summary|keywords?)\b', line):
             break
-        if _NOISE.search(line) or len(line) < 8:
+        if _NOISE.search(line) or len(line) < 8 or (scidoc.journal_like(line) and len(line.split()) <= 6) or scidoc._norm(line) in header_norms:
             if group:
                 break
             continue
-        if _looks_like_authors(line):
+        if _looks_like_authors(line) and not (group and group[-1].endswith(':')):
             if group or not title:
                 author_lines.append(line)
             if group and not title:
@@ -493,6 +521,10 @@ def identify(doc):
         # A title is a short noun phrase. A sentence (capital-less start, closing full stop, or very long) is body text.
         if len(title.split()) < 3 or len(title.split()) > 25 or not title[0].isupper() or raw_title.rstrip().endswith('.'):
             title = None
+    front = scidoc.front_matter(doc.body_pages, doc.pdf_meta, doc.headers)      # font-aware: the journal banner is not the title
+    if front['title']:
+        title = front['title']
+        author_lines = [l for l in author_lines if l.strip(' .') not in title]       # a title line that merely looks like a name list
     meta_title = (doc.meta.get('title') or '').strip()
     if not title and 10 <= len(meta_title) <= 250 and not re.search(r'(?i)untitled|microsoft word|\.(pdf|docx?|tex)$', meta_title) \
             and _overlap(meta_title, front_text) >= 0.8:
@@ -504,11 +536,14 @@ def identify(doc):
         surnames = [re.split(r'\s+', n.strip())[-1] for n in re.split(r'[;,]| and ', meta_author) if n.strip()]
         if surnames and all(s.lower() in front_text.lower() for s in surnames):
             authors = meta_author
+    if front['authors']:
+        authors = front['authors']
     year, year_source = _find_year(front_text, doc)
     lower = _norm(front_text + ' ' + ' '.join(c.section for c in doc.body_chunks()))
     kind = _guess_type(doc, title or '', lower)
     subject_terms = [t for t, _ in Counter(terms(' '.join(filter(None, [title, title, _abstract_text(doc)])), drop_generic=True)).most_common(10)]
     return {'title': title, 'authors': authors, 'year': year, 'year_source': year_source, 'type': kind,
+            'journal': front['journal'], 'doi': front['doi'],
             'subject': title or (' '.join(subject_terms[:6]) or None), 'subject_terms': subject_terms}
 
 
@@ -542,6 +577,8 @@ def _guess_type(doc, title, lower_front):
                             r'perspective|outlook|challenges and opportunities|comprehensive review)\b', lower_front))
     if re.search(r'(?i)\b(review|perspective|overview|survey|progress|advances)\b', title):
         review += 2
+    if re.search(r'(?im)^\s*(?:review|review article|mini[- ]?review|perspective|invited review|progress report|feature article)\s*$', doc.body_pages[0][:900]):
+        review += 2                                           # the article-type label printed above the title
     sections = ' '.join(c.section.lower() for c in doc.body_chunks())
     experimental = len(re.findall(r'\b(?:experimental|materials and methods|methods|results and discussion|we (?:synthesi[sz]ed|prepared|measured|fabricated)|were (?:prepared|synthesi[sz]ed|measured))\b', lower_front + ' ' + sections))
     if re.search(r'(?i)\b(thesis|dissertation)\b', title + ' ' + doc.body_pages[0][:400]):
@@ -562,7 +599,9 @@ def identification_block(doc):
     lines = ['**Document identification** (read from the file itself)',
              f"- Title: {meta.get('title') or 'not found in the document'}",
              f"- Authors: {meta.get('authors') or 'not found in the document'}",
+             f"- Journal: {meta.get('journal') or 'not found in the document'}",
              f'- Year: {year_text}',
+             f"- DOI: {meta.get('doi') or 'not found in the document'}",
              f"- Type: {meta.get('type') or 'unknown'}",
              f"- Pages: {doc.n_pages}" + (f' (reference list starts on page {doc.ref_start_page} and is not summarised)' if doc.ref_start_page else '')]
     return '\n'.join(lines)
@@ -686,6 +725,16 @@ _NUMBER = re.compile(r'(?<![\w.])[-+]?\d+(?:,\d{3})*(?:\.\d+)?')
 _UNITS = ('W/mK|W/m·K|wt%|vol%|mol%|%|°C|°|kPa|MPa|GPa|Pa|mN|kN|N|nm|µm|um|mm|cm|km|m|ms|µs|ns|min|h|s|kHz|MHz|GHz|Hz|mV|kV|V|mA|µA|A|mW|kW|W|'
           'kJ|J|mg|µg|kg|g|mmol|mol|mM|µM|M|eV|Ω|dB|K|rpm|mL|µL|L|ppm|S/m|kg/m3|g/cm3|g/mol|N/m|Pa·s|J/g|W/m|%/K')
 _NUM_UNIT = re.compile(r'(?<![\w.])([-+]?\d+(?:\.\d+)?)\s?(' + _UNITS + r')(?![A-Za-z])')
+_UNIT_TOKENS = set(_UNITS.split('|')) | {'wt', 'vol', 'mol', 'doi', 'pdf', 'fig', 'eq', 'ref', 'SI'}
+
+
+def _entities(text):
+    """Acronyms and formulas (PDMS, LCN, TiO2) in `text`, units excluded."""
+    return {e for e in scidoc.entities(text) if e not in _UNIT_TOKENS}
+
+
+def _page_entities(doc, page):
+    return doc.page_entities[page - 1] if 0 < page <= len(doc.page_entities) else set()
 
 
 def parse_citations(sentence):
@@ -746,6 +795,7 @@ class Verification:
     mismatch_reasons: list = field(default_factory=list)
     ref_only_terms: list = field(default_factory=list)
     off_by_one: int = 0
+    interpretations: int = 0
 
     @property
     def ratio(self):
@@ -768,12 +818,17 @@ def verify_answer(answer, docs, expect_label=None):
         clean, cites = parse_citations(sentence)
         if not clean or sentence.startswith('Document identification'):
             continue
+        interpretation = bool(re.match(r'(?i)^interpretation\s*:', clean))
+        if interpretation:                                        # the model's own connecting reasoning: marked, cited, still checked
+            clean = re.sub(r'(?i)^interpretation\s*:\s*', '', clean)
+            result.interpretations += 1
+        threshold = INTERPRETATION_THRESHOLD if interpretation else SUPPORT_THRESHOLD
         content = terms(clean, verify=True)
         if _META_SENTENCE.search(clean) or (len(content) < 3 and not _NUMBER.search(clean) and not cites) or clean.endswith(':'):
             continue
         result.claims += 1
         reason = None
-        support_terms, support_norm = set(), ''
+        support_terms, support_norm, support_entities = set(), '', set()
         if cites:
             for label, first, last in cites:
                 doc = by_label.get(label) if label else single
@@ -786,32 +841,47 @@ def verify_answer(answer, docs, expect_label=None):
                 for page in range(first, last + 1):
                     support_terms |= doc.page_terms[page - 1]
                     support_norm += ' ' + doc.page_norm[page - 1]
+                    support_entities |= _page_entities(doc, page)
             if reason is None:
                 supported = _support(content, support_terms)
-                if supported < SUPPORT_THRESHOLD:                          # PDF text can spill across a page break
-                    near_terms, near_norm = set(support_terms), support_norm
+                if supported < threshold:                                  # PDF text can spill across a page break
+                    near_terms, near_norm, near_entities = set(support_terms), support_norm, set(support_entities)
                     for label, first, last in cites:
                         doc = by_label.get(label) if label else single
                         for page in (first - 1, last + 1):
                             if doc is not None and 1 <= page <= doc.n_pages:
                                 near_terms |= doc.page_terms[page - 1]
                                 near_norm += ' ' + doc.page_norm[page - 1]
-                    if _support(content, near_terms) >= SUPPORT_THRESHOLD:
+                                near_entities |= _page_entities(doc, page)
+                    if _support(content, near_terms) >= threshold:
                         result.off_by_one += 1
-                        support_terms, support_norm = near_terms, near_norm
+                        support_terms, support_norm, support_entities = near_terms, near_norm, near_entities
                     else:
-                        other = [d.label for d in docs if _support(content, set().union(*d.page_terms)) >= SUPPORT_THRESHOLD]
+                        other = [d.label for d in docs if _support(content, set().union(*d.page_terms)) >= threshold]
                         reason = ('content comes from another document: ' + ', '.join(other)) if other else \
                             f'only {int(supported * 100)}% of its terms appear on the cited page'
         else:
             support_terms = set().union(*[set().union(*d.page_terms) for d in docs])
             support_norm = ' '.join(' '.join(d.page_norm) for d in docs)
-            if _support(content, support_terms) < SUPPORT_THRESHOLD:
+            support_entities = set().union(*[e for d in docs for e in d.page_entities]) if docs else set()
+            if interpretation:
+                reason = 'an interpretation must cite the pages it rests on'
+            elif _support(content, support_terms) < threshold:
                 reason = 'uncited statement not supported by the document'
         if reason is None:
             for problem in _check_numbers(clean, support_norm):
                 reason = problem
                 break
+        if reason is None:                                         # two materials or methods mixed up, or one that is not in the paper at all
+            sentence_entities = _entities(clean)
+            if sentence_entities:
+                all_entities = set().union(*[e for d in docs for e in d.page_entities]) if docs else set()
+                missing = sentence_entities - support_entities
+                absent = missing - all_entities
+                if absent:
+                    reason = f'mentions {", ".join(sorted(absent))}, which does not appear in the document'
+                elif missing and len(sentence_entities) >= 2:
+                    reason = f'mixes entities: {", ".join(sorted(missing))} is not on the cited page'
         if reason is None and any(d.meta.get('type') == 'review article' for d in docs) and _ATTRIBUTION.search(clean):
             if not re.search(r'(?i)\b(?:we|our)\s+(?:\w+\s+)?(?:synthesi[sz]|fabricat|measur|demonstrat|prepar)', support_norm):
                 reason = 'presents work from a review article as the authors\' own experiment'
@@ -954,7 +1024,7 @@ def _emit(emit, text):
         emit({'type': 'status', 'text': text})
 
 
-def respond(message, docs, ask, emit=None, num_ctx=None, answer_tokens=1500):
+def respond(message, docs, ask, emit=None, num_ctx=None, answer_tokens=None):
     """Answer `message` about `docs` (Document objects). `ask(messages, max_tokens)` calls the model and returns the
     reply message (a dict with 'content', optionally '_prompt_tokens') or plain text."""
     num_ctx = num_ctx or NUM_CTX
@@ -969,8 +1039,8 @@ def respond(message, docs, ask, emit=None, num_ctx=None, answer_tokens=1500):
     if kind == 'identify':
         return Answer('\n\n'.join(identification_block(d) for d in docs), 'identified', {'intent': kind})
     if kind == 'summary':
-        return _summarize(message, docs, ask, emit, num_ctx, answer_tokens)
-    return _question(message, docs, ask, emit, num_ctx, answer_tokens)
+        return _summarize(message, docs, ask, emit, num_ctx, answer_tokens or 2400)
+    return _question(message, docs, ask, emit, num_ctx, answer_tokens or 1500)
 
 
 def _not_found(docs, info):
@@ -1094,6 +1164,20 @@ def _windows(doc, budget_chars, max_windows):
 
 
 def _summarize_one(doc, ask, emit, num_ctx, answer_tokens, map_calls):
+    """Section-aware reader (scisummary). If it fails because of a bug, the simpler reader below is used instead of losing the summary."""
+    from . import scisummary
+    try:
+        return scisummary.summarize_one(doc, ask, emit, num_ctx, answer_tokens, map_calls)
+    except (ContextOverflow, DocumentError):
+        raise
+    except Exception as exc:
+        if type(exc).__name__ == 'StreamCancelled' or isinstance(exc, (OSError, ConnectionError, TimeoutError)):
+            raise                                                      # cancelled or the model is unreachable: the simple reader would fail the same way
+        _event('SCISUMMARY_FAILED', level=logging.ERROR, error=repr(exc), doc=doc.name)
+        return _summarize_one_basic(doc, ask, emit, num_ctx, answer_tokens, map_calls)
+
+
+def _summarize_one_basic(doc, ask, emit, num_ctx, answer_tokens, map_calls):
     system_extra = _type_note(doc)
     plan = _SUMMARY_PLANS.get(doc.meta.get('type'), _DEFAULT_PLAN)
     header = _doc_header(doc)

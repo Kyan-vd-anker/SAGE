@@ -39,7 +39,7 @@ def faithful_model(messages, max_tokens=None, **_):
     passages = re.findall(r'(?m)^\[(D\d+) (?:p\.|part )(\d+)\] (.+)$', user)
     if 'TASK: List the facts' in user:
         return '\n'.join(f"- [{label} p.{page}] [own] {re.split(r'(?<=[.!?])\s', text)[0][:170]}" for label, page, text in passages[:4])
-    notes = re.findall(r'(?m)^- \[(D\d+) p\.(\d+)\] \((\w+)\) (.+)$', user)
+    notes = re.findall(r'(?m)^- \[(D\d+) p\.(\d+)\] \((\w+)(?:\|\w+)?\) (.+)$', user)
     if notes:
         return '\n'.join(f'{fact} [{label} p.{page}]' for label, page, _, fact in notes[:6])
     return '\n'.join(f"{re.split(r'(?<=[.!?])\s', text)[0]} [{label} p.{page}]" for label, page, text in passages[:5])
