@@ -218,9 +218,9 @@ class BudgetTests(Corpus):
         response.__iter__.return_value = [b'{"message":{"content":"ok"},"done":true,"prompt_eval_count":321}\n']
         connection = MagicMock(getresponse=lambda: response)
         with patch('sage.llm.http.client.HTTPConnection', return_value=connection):
-            reply = llm.chat_stream([{'role': 'user', 'content': 'q'}], model='m', max_tokens=50, num_ctx=8192)
+            reply = llm.chat_stream([{'role': 'user', 'content': 'q'}], model='m', max_tokens=50, num_ctx=32000)
         body = json.loads(connection.request.call_args.kwargs['body'])
-        self.assertEqual(body['options'], {'num_predict': 50, 'num_ctx': 8192})
+        self.assertEqual(body['options'], {'num_predict': 50, 'num_ctx': 32000})
         self.assertEqual(reply['_prompt_tokens'], 321)
 
 

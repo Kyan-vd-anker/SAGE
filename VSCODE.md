@@ -54,7 +54,7 @@ in `reasoning_content`, apart from the answer.
 
 ### Chat
 
-Requests are passed to Ollama with a fixed context window (`SAGE_VSCODE_NUM_CTX`, default 8192, the same as the built models so nothing is reloaded). A
+Requests are passed to Ollama with a fixed context window (`SAGE_VSCODE_NUM_CTX`, default 32000, the same as the built models so nothing is reloaded). A
 request that would not fit is refused with `400 context_length_exceeded` instead of letting Ollama silently drop the start of the prompt: send less
 code or history. At most `SAGE_VSCODE_MAX_CONCURRENT` (4) requests run at once; more get `429`.
 

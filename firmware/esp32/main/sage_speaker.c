@@ -1030,7 +1030,7 @@ void app_main(void)
     xTaskCreatePinnedToCore(ble_presence_task, "sage-presence", 4096, NULL, 3, NULL, 0);
 #endif
     wake_engine_start();
-    xTaskCreatePinnedToCore(audio_task, "sage-audio", 8192, NULL, 8, NULL, 1);
+    xTaskCreatePinnedToCore(audio_task, "sage-audio", 32000, NULL, 8, NULL, 1);
     xTaskCreatePinnedToCore(poll_task, "sage-poll", 6144, NULL, 5, NULL, 0);
     xTaskCreatePinnedToCore(report_ring_task, "sage-ring-report", 4096, NULL, 4, NULL, 0);
     xTaskCreatePinnedToCore(ring_state_task, "sage-ring", 4096, NULL, 4, NULL, 0);

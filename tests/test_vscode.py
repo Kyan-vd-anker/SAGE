@@ -48,7 +48,7 @@ def chat_events(text, thinking='', calls=None, done_reason='stop'):
 
 class Base(unittest.TestCase):
     def setUp(self):
-        for target, value in (('VSCODE_TOKEN', TOKEN), ('VSCODE_FIM', 'auto'), ('VSCODE_NUM_CTX', 8192), ('FAST_MODEL', 'local/sage-fast'),
+        for target, value in (('VSCODE_TOKEN', TOKEN), ('VSCODE_FIM', 'auto'), ('VSCODE_NUM_CTX', 32000), ('FAST_MODEL', 'local/sage-fast'),
                               ('DEEP_MODEL', 'local/sage-coder'), ('REASONING_MODEL', 'local/sage-reason'), ('FAST_THINK', False),
                               ('DEEP_THINK', False), ('REASONING_THINK', True)):
             patcher = patch.object(config, target, value)
@@ -130,7 +130,7 @@ class ChatTests(Base):
         fake = self.fake({'/api/chat': lambda body: chat_events('ok')})
         self.chat(temperature=0.3, top_p=0.8, stop=['\n\n'], max_tokens=100)
         options = fake.bodies('/api/chat')[0]['options']
-        self.assertEqual((options['temperature'], options['top_p'], options['stop'], options['num_predict'], options['num_ctx']), (0.3, 0.8, ['\n\n'], 100, 8192))
+        self.assertEqual((options['temperature'], options['top_p'], options['stop'], options['num_predict'], options['num_ctx']), (0.3, 0.8, ['\n\n'], 100, 32000))
 
     def test_content_parts_and_developer_messages_are_flattened(self):
         fake = self.fake({'/api/chat': lambda body: chat_events('ok')})

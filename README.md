@@ -30,7 +30,7 @@ The **Studio** page is an editor where Sage reads along. Choose LaTeX, Document 
 
 ### Faster first token (optional)
 
-You can store Sage's fixed system prompt and tuned settings inside the models instead of resending them with every request: run `python scripts/build-models.py` from the SAGE folder. It builds `sage-fast`, `sage-coder` and `sage-reason` (with `num_ctx 8192` and tuned temperatures), then tests that each one knows the stored prompt. Switch Sage over by setting `SAGE_FAST_MODEL=sage-fast`, `SAGE_DEEP_MODEL=sage-coder` and `SAGE_REASONING_MODEL=sage-reason`, then restart. Sage detects the `sage-` names and sends only the changing text (date, memories) per request. Remove the three settings to go back. Re-run the script whenever the prompt in `sage/agent.py` changes.
+You can store Sage's fixed system prompt and tuned settings inside the models instead of resending them with every request: run `python scripts/build-models.py` from the SAGE folder. It builds `sage-fast`, `sage-coder` and `sage-reason` (with `num_ctx 32000` and tuned temperatures), then tests that each one knows the stored prompt. Switch Sage over by setting `SAGE_FAST_MODEL=sage-fast`, `SAGE_DEEP_MODEL=sage-coder` and `SAGE_REASONING_MODEL=sage-reason`, then restart. Sage detects the `sage-` names and sends only the changing text (date, memories) per request. Remove the three settings to go back. Re-run the script whenever the prompt in `sage/agent.py` changes.
 
 ### Install or update on Windows
 

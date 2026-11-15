@@ -10,6 +10,10 @@ WORKSPACE = Path(os.getenv("SAGE_WORKSPACE", DATA / "workspace"))
 PLUGIN_DIR = Path(os.getenv("SAGE_PLUGINS", ROOT / "plugins"))
 STATIC_DIR = Path(__file__).parent / "static"
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
+# One context window (num_ctx) for every chat lane, background job and the VS Code endpoints. Every request sends it, so Ollama never
+# reloads a model (and drops its prompt cache) because two callers asked for different sizes. 16384 leaves room for code in VS Code and
+# costs about 1 GB of KV cache on a 7B model; raise it (SAGE_NUM_CTX=32768) if VS Code still reports context_length_exceeded.
+NUM_CTX = max(2048, int(os.getenv("SAGE_NUM_CTX", "16384")))
 # Three model lanes (see llm.model_for_request): fast = everyday replies, deep = code, tool calls and long input,
 # reasoning = math, physics and trade-off discussions. The old SAGE_MODEL and SAGE_CODING_MODEL names still work.
 FAST_MODEL = os.getenv("SAGE_FAST_MODEL", os.getenv("SAGE_MODEL", "qwen2.5:3b"))
@@ -32,7 +36,7 @@ SPEAKER_ROOM = os.getenv("SAGE_SPEAKER_ROOM", "bedroom")  # the room the speaker
 # Document question answering (see docqa.py). NUM_CTX is the whole context window Ollama allocates for a document call
 # (prompt + reply); Sage sizes every document prompt to fit inside it instead of letting Ollama silently truncate.
 DOC_MODEL = os.getenv("SAGE_DOC_MODEL", REASONING_MODEL)
-DOC_NUM_CTX = int(os.getenv("SAGE_DOC_NUM_CTX", "8192"))
+DOC_NUM_CTX = int(os.getenv("SAGE_DOC_NUM_CTX", "32000"))
 DOC_MAP_MAX_CALLS = int(os.getenv("SAGE_DOC_MAP_MAX_CALLS", "16"))  # model passes used to read a document too long for one window
 # Prompt prefix caching (see llm.py). Ollama only re-reads the part of a prompt that differs from the start of the previous one.
 # SAGE_PROMPT_CACHE=0 turns the prompt re-arranging off. SAGE_CHAT_TURNS is how many recent exchanges (question + answer) are sent as real
@@ -50,7 +54,7 @@ LOGIN_EXEMPT_IPS = {item.strip() for item in os.getenv("SAGE_LOGIN_EXEMPT_IPS", 
 def _flag(name, default):
     return os.getenv(name, str(default)).strip().lower() in ("1", "true", "yes", "on")
 VSCODE_TOKEN = os.getenv("SAGE_VSCODE_TOKEN", "")
-VSCODE_NUM_CTX = int(os.getenv("SAGE_VSCODE_NUM_CTX", "8192"))               # keep equal to the models' baked num_ctx so Ollama does not reload them
+VSCODE_NUM_CTX = int(os.getenv("SAGE_VSCODE_NUM_CTX", str(NUM_CTX)))               # keep equal to the models' baked num_ctx so Ollama does not reload them
 VSCODE_FIM = os.getenv("SAGE_VSCODE_FIM", "auto").strip().lower()             # auto = use the model's fill-in-the-middle when Ollama reports it; on | off
 VSCODE_PREFIX_CHARS = int(os.getenv("SAGE_VSCODE_PREFIX_CHARS", "6000"))      # code before the cursor sent for an inline suggestion
 VSCODE_SUFFIX_CHARS = int(os.getenv("SAGE_VSCODE_SUFFIX_CHARS", "1500"))     # code after the cursor
@@ -58,6 +62,11 @@ VSCODE_MAX_CONCURRENT = int(os.getenv("SAGE_VSCODE_MAX_CONCURRENT", "4"))
 FAST_THINK = _flag("SAGE_THINK_FAST", False)
 DEEP_THINK = _flag("SAGE_THINK_DEEP", False)
 REASONING_THINK = _flag("SAGE_THINK_REASONING", True)
+# Memory (memory.py, entities.py, userprofile.py, capture.py)
+CORE_PROFILE_CHARS = int(os.getenv("SAGE_CORE_PROFILE_CHARS", "1400"))              # always-on profile block (about 400 tokens), part of the cached prompt prefix
+CORE_PROFILE_VOICE_CHARS = int(os.getenv("SAGE_CORE_PROFILE_VOICE_CHARS", "450"))   # the smaller block used for voice and small talk
+CAPTURE_ENABLED = _flag("SAGE_MEMORY_CAPTURE", True)                                 # idle-time LLM extraction of memories, entities and relations after a reply
+PROJECT_STATE_ENABLED = _flag("SAGE_PROJECT_STATE", True)                            # idle-time "state of play" summaries per project
 HA_TOKEN = os.getenv("SAGE_HA_TOKEN", "")
 SHORTCUT_TOKEN = os.getenv("SAGE_SHORTCUT_TOKEN", "")
 TELEGRAM_BOT_TOKEN = os.getenv("SAGE_TELEGRAM_BOT_TOKEN", "")
