@@ -34,8 +34,30 @@ SPEAKER_ROOM = os.getenv("SAGE_SPEAKER_ROOM", "bedroom")  # the room the speaker
 DOC_MODEL = os.getenv("SAGE_DOC_MODEL", REASONING_MODEL)
 DOC_NUM_CTX = int(os.getenv("SAGE_DOC_NUM_CTX", "8192"))
 DOC_MAP_MAX_CALLS = int(os.getenv("SAGE_DOC_MAP_MAX_CALLS", "16"))  # model passes used to read a document too long for one window
+# Prompt prefix caching (see llm.py). Ollama only re-reads the part of a prompt that differs from the start of the previous one.
+# SAGE_PROMPT_CACHE=0 turns the prompt re-arranging off. SAGE_CHAT_TURNS is how many recent exchanges (question + answer) are sent as real
+# conversation messages so they are reused from the cache instead of being retrieved as quoted context; 0 keeps the old one-message prompt.
+# The window moves in blocks of SAGE_CHAT_TURN_BLOCK exchanges, so the start of the conversation stays identical (and cached) between turns.
+PROMPT_CACHE = os.getenv("SAGE_PROMPT_CACHE", "1") != "0"
+CHAT_TURNS = max(0, int(os.getenv("SAGE_CHAT_TURNS", "0")))
+CHAT_TURN_BLOCK = max(1, int(os.getenv("SAGE_CHAT_TURN_BLOCK", "3")))
+CHAT_HISTORY_CHARS = int(os.getenv("SAGE_CHAT_HISTORY_CHARS", "6000"))      # budget for the transcript (about 1,800 tokens)
+CHAT_MESSAGE_CHARS = int(os.getenv("SAGE_CHAT_MESSAGE_CHARS", "1500"))      # one long message is cut here before it enters the transcript
 STUDIO_MODEL = os.getenv("SAGE_STUDIO_MODEL", "")  # model that reviews Studio text; empty = fast lane for documents, deep lane for LaTeX and sheets
 LOGIN_EXEMPT_IPS = {item.strip() for item in os.getenv("SAGE_LOGIN_EXEMPT_IPS", "").split(",") if item.strip()}  # devices that skip the login (e.g. wall display); empty by default
+# VS Code endpoints (see vscode.py). Disabled until SAGE_VSCODE_TOKEN is set; the extension sends it as `Authorization: Bearer <token>`.
+# Thinking per lane: the fast and coder lanes answer straight away, the reasoning lane thinks first (override with SAGE_THINK_FAST / _DEEP / _REASONING = true|false).
+def _flag(name, default):
+    return os.getenv(name, str(default)).strip().lower() in ("1", "true", "yes", "on")
+VSCODE_TOKEN = os.getenv("SAGE_VSCODE_TOKEN", "")
+VSCODE_NUM_CTX = int(os.getenv("SAGE_VSCODE_NUM_CTX", "8192"))               # keep equal to the models' baked num_ctx so Ollama does not reload them
+VSCODE_FIM = os.getenv("SAGE_VSCODE_FIM", "auto").strip().lower()             # auto = use the model's fill-in-the-middle when Ollama reports it; on | off
+VSCODE_PREFIX_CHARS = int(os.getenv("SAGE_VSCODE_PREFIX_CHARS", "6000"))      # code before the cursor sent for an inline suggestion
+VSCODE_SUFFIX_CHARS = int(os.getenv("SAGE_VSCODE_SUFFIX_CHARS", "1500"))     # code after the cursor
+VSCODE_MAX_CONCURRENT = int(os.getenv("SAGE_VSCODE_MAX_CONCURRENT", "4"))
+FAST_THINK = _flag("SAGE_THINK_FAST", False)
+DEEP_THINK = _flag("SAGE_THINK_DEEP", False)
+REASONING_THINK = _flag("SAGE_THINK_REASONING", True)
 HA_TOKEN = os.getenv("SAGE_HA_TOKEN", "")
 SHORTCUT_TOKEN = os.getenv("SAGE_SHORTCUT_TOKEN", "")
 TELEGRAM_BOT_TOKEN = os.getenv("SAGE_TELEGRAM_BOT_TOKEN", "")

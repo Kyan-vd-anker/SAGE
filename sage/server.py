@@ -21,7 +21,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, unquote, parse_qs
-from . import config, db, llm, agent, plugins, jobs, memory, engineering, outlook, tools as tool_registry, events, routes, scheduler, planner, reminders, system_control, computer_tasks, telegram
+from . import config, db, llm, agent, plugins, jobs, memory, engineering, outlook, tools as tool_registry, events, routes, scheduler, planner, reminders, system_control, computer_tasks, telegram, vscode
 
 STREAMS={}  # active streaming replies by id, so the Stop button can cancel them
 WALL_CACHE={'ollama_at':0.0,'ollama':{},'events_at':0.0,'events':[]}
@@ -70,6 +70,7 @@ def send_json(handler, value, status=200):
     handler.send_header('Content-Length',str(len(data))); handler.send_header('Cache-Control','no-store'); handler.end_headers(); handler.wfile.write(data)
 
 SESSIONS={}     # login cookie token -> expiry time (in memory: a restart logs everyone out)
+VSCODE_PREFIXES=('/v1/','/api/vscode/')
 LOGIN_FAILS={}  # client ip -> times of recent wrong passwords
 SESSION_SECONDS=30*24*3600
 LOGIN_PAGE='''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sage login</title>
@@ -99,6 +100,7 @@ class Handler(BaseHTTPRequestHandler):
     def login_required(self, path, method):
         """True when SAGE_PASSWORD is set and this request has no valid login cookie."""
         if not config.PASSWORD: return False
+        if path.startswith(VSCODE_PREFIXES): return False   # VS Code extensions cannot log in with a cookie; handle_vscode requires SAGE_VSCODE_TOKEN
         if method=='POST' and path in ('/api/ha/command','/api/shortcuts/awake'): return False  # they have their own bearer tokens
         try: address=ipaddress.ip_address(self.client_address[0])
         except ValueError: return True
@@ -200,6 +202,29 @@ class Handler(BaseHTTPRequestHandler):
         if documents and not loaded:
             raise ValueError('No supported document content was extracted. Select PDF, DOCX, TXT, Markdown, CSV, JSON, or TEX files.')
         return loaded
+    def handle_vscode(self, method, path):
+        """VS Code endpoints (vscode.py): an OpenAI-compatible API and inline completion, authenticated with SAGE_VSCODE_TOKEN."""
+        if not config.VSCODE_TOKEN: return send_json(self,vscode.error_body('VS Code endpoints are disabled; configure SAGE_VSCODE_TOKEN','disabled'),503)
+        supplied=self.headers.get('Authorization','')
+        if not hmac.compare_digest(supplied.encode('utf-8','replace'),('Bearer '+config.VSCODE_TOKEN).encode('utf-8','replace')):
+            return send_json(self,vscode.error_body('The VS Code token is invalid','invalid_api_key'),401)
+        body={}
+        if method=='POST':
+            try: body=payload(self,limit=8_000_000)
+            except (ValueError,json.JSONDecodeError): return send_json(self,vscode.error_body('The request body is not valid JSON or is too large'),400)
+            if not isinstance(body,dict): return send_json(self,vscode.error_body('The request body must be a JSON object'),400)
+        client=(self.headers.get('X-Client-Id') or self.client_address[0])[:80]
+        try: result=vscode.handle(method,path,body,client)
+        except vscode.ApiError as exc: return send_json(self,vscode.error_body(exc.message,exc.code),exc.status)
+        except Exception as exc: return send_json(self,vscode.error_body(f'Sage could not handle this request: {exc}','server_error'),500)
+        if result[0]=='json': return send_json(self,result[2],result[1])
+        stream=result[1]
+        try:
+            self.send_response(200); self.send_header('Content-Type','text/event-stream; charset=utf-8'); self.send_header('Cache-Control','no-cache'); self.send_header('X-Accel-Buffering','no'); self.end_headers()
+            for piece in stream:
+                self.wfile.write(piece.encode('utf-8')); self.wfile.flush()
+        except OSError: pass     # the editor closed the connection (it does this for every stale suggestion)
+        finally: stream.close()
     def client_is_allowed(self):
         try: address=ipaddress.ip_address(self.client_address[0])
         except ValueError: return False
@@ -250,6 +275,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self.client_is_allowed(): return send_json(self,{'error':'This client IP is not allowed to access Sage'},403)
         path=urlparse(self.path).path
         if self.login_required(path,'GET'): return self.login_denied(path)
+        if path.startswith(VSCODE_PREFIXES): return self.handle_vscode('GET',path)
         if path=='/api/events/stream':
             raw=parse_qs(urlparse(self.path).query).get('since',[''])[0]
             since=int(raw) if raw.isdigit() else events.cursor()
@@ -545,6 +571,9 @@ class Handler(BaseHTTPRequestHandler):
         if path=='/login': return self.handle_login()
         if path=='/logout': return self.handle_logout()
         if self.login_required(path,'POST'): return send_json(self,{'error':'Login required'},401)
+        if path.startswith(VSCODE_PREFIXES):
+            jobs.note_interaction()
+            return self.handle_vscode('POST',path)
         try:
             jobs.note_interaction()
             if path=='/api/engineering/assets': return self.upload_engineering_asset()

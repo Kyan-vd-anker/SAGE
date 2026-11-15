@@ -10,6 +10,7 @@ import urllib.request
 import urllib.error
 from urllib.parse import urlparse
 from .config import OLLAMA_URL, MODEL, CODING_MODEL, REASONING_MODEL, ROUTER_LONG_INPUT_CHARS, VISION_MODEL, EMBED_MODEL
+from . import config as _config
 
 class OllamaError(RuntimeError): pass
 _priority = threading.Condition()
@@ -25,18 +26,21 @@ class BackgroundInterrupted(RuntimeError): pass
 _SPEEDS = collections.deque(maxlen=200)  # (time, model, tokens, seconds, seconds to first token, cold start) for the last 200 replies; resets when Sage restarts
 _speed_lock = threading.Lock()
 
-def _record_speed(model, data):
+def _record_speed(model, data, prompt_chars=0):
     """Remember how fast Ollama answered: tokens per second (eval_count over eval_duration) and the time before the
-    first token (model load plus reading the prompt). All durations from Ollama are in nanoseconds."""
+    first token (model load plus reading the prompt). All durations from Ollama are in nanoseconds. prompt_eval_count is how many
+    prompt tokens it had to evaluate this time: with a reused prompt prefix that is only the new part."""
     try:
         tokens = int(data.get('eval_count') or 0)
         seconds = float(data.get('eval_duration') or 0) / 1e9
         loading = float(data.get('load_duration') or 0) / 1e9
         reading = float(data.get('prompt_eval_duration') or 0) / 1e9
+        evaluated = data.get('prompt_eval_count')
+        evaluated = int(evaluated) if evaluated is not None else None
     except (TypeError, ValueError, AttributeError):
         return
     if tokens < 1 or seconds <= 0: return
-    with _speed_lock: _SPEEDS.append((time.time(), str(model), tokens, seconds, loading + reading, loading > 1.0))
+    with _speed_lock: _SPEEDS.append((time.time(), str(model), tokens, seconds, loading + reading, loading > 1.0, evaluated, int(prompt_chars or 0)))
 
 def speed_stats():
     """Average generation speed in tokens per second (total tokens over total generation time) and the average time
@@ -54,6 +58,10 @@ def speed_stats():
     result['last_tokens_per_second'] = round(last[-1][2] / last[-1][3], 1) if last else None
     result['last_first_token_seconds'] = round(items[-1][4], 2) if items and items[-1][4] > 0 else None
     result['by_model'] = {model: summary([r for r in items if r[1] == model]) for model in sorted({r[1] for r in items})}
+    evaluated = [r[6] for r in items if r[6] is not None]
+    result['avg_prompt_tokens_evaluated'] = round(sum(evaluated) / len(evaluated)) if evaluated else None
+    result['last_prompt_tokens_evaluated'] = items[-1][6] if items else None
+    result['last_prompt_reuse_estimate'] = _reuse_estimate(items[-1]) if items else None   # ~share of the prompt served from Ollama's cache
     return result
 
 
@@ -106,7 +114,8 @@ def _release():
         _chat_busy=False
         _priority.notify_all()
 
-BAKED_PREFIX = 'sage-'  # models made by scripts/build-models.py keep Sage's system prompt in their Modelfile
+BAKED_PREFIX = 'sage-'  # models made by scripts/build-models.py (named local/sage-fast, ...) keep Sage's system prompt in their Modelfile
+_BAKED_CHECK = {}       # model -> (checked at, verdict); the verdict is False only when Ollama shows a different stored prompt
 
 def _static_prompt():
     from . import agent
@@ -116,7 +125,7 @@ def _baked(model, messages):
     """Models made by scripts/build-models.py already hold Sage's fixed system prompt. Ollama adds that prompt only when
     the first message is not a system message, so the changing system text (date, memories) moves behind the first
     message, where Ollama folds it into the same system block. Other models and other prompts are sent unchanged."""
-    if not str(model).startswith(BAKED_PREFIX) or not messages: return messages
+    if not _is_baked_name(model) or not messages: return messages
     static = _static_prompt()
     if not any(m.get('role') == 'system' and str(m.get('content') or '').startswith(static) for m in messages):
         # A call with its own prompt: keep the stored prompt out (an empty system message blocks it).
@@ -130,8 +139,92 @@ def _baked(model, messages):
         else:
             rest.append(item)
     if not rest: return messages
-    if extra: rest.insert(max(1, len(rest) - 1), {'role': 'system', 'content': '\n\n'.join(extra)})  # never first, or Ollama skips the stored prompt
+    if extra: rest.insert(max(1, _last_user_index(rest)), {'role': 'system', 'content': '\n\n'.join(extra)})  # never first, or Ollama skips the stored prompt; the position depends only on the latest user message, so it stays put while a tool loop appends
     return rest
+
+
+# ---- prompt prefix caching --------------------------------------------------------------------------------------------
+# Ollama keeps the evaluated prompt (the KV cache) and, on the next request, only evaluates what differs from the start of the
+# previous prompt. So the longer the unchanged beginning of every request, the faster the first token. Three rules follow:
+#   1. the fixed system prompt (and the tool list the template puts right after it) always comes first, byte for byte the same;
+#   2. everything that changes (time, retrieved context, memories, per-turn notes) comes after the conversation, in front of the
+#      latest user message, where it only invalidates itself;
+#   3. messages already sent are never edited or reordered.
+
+def _is_baked_name(model):
+    return str(model).rsplit('/', 1)[-1].startswith(BAKED_PREFIX)
+
+
+def _stored_system(info):
+    if not isinstance(info, dict): return None
+    system = info.get('system')
+    if isinstance(system, str) and system.strip(): return system
+    match = re.search(r'SYSTEM\s+"""(.*?)"""', str(info.get('modelfile') or ''), re.S)
+    return match.group(1) if match else None
+
+
+def _baked_current(model):
+    """True when `model` should be treated as holding Sage's system prompt. Only a proven mismatch (the model was built from an older
+    prompt: rebuild it with scripts/build-models.py) turns it off; an unreachable server or an unexpected reply keeps it on."""
+    if not _is_baked_name(model) or not _config.PROMPT_CACHE: return False
+    now = time.monotonic()
+    cached = _BAKED_CHECK.get(str(model))
+    if cached and now - cached[0] < 300: return cached[1]
+    verdict = True
+    try:
+        request = urllib.request.Request(OLLAMA_URL.rstrip('/') + '/api/show', data=json.dumps({'model': str(model)}).encode(),
+                                         headers={'Content-Type': 'application/json'}, method='POST')
+        with urllib.request.urlopen(request, timeout=5) as response:
+            stored = _stored_system(json.loads(response.read()))
+        if stored is not None and stored.strip() != _static_prompt().strip():
+            verdict = False
+            print(f"Sage: {model} was built from an older system prompt; sending the current prompt instead. Run scripts/build-models.py to rebuild it.", flush=True)
+    except Exception:
+        pass
+    _BAKED_CHECK[str(model)] = (now, verdict)
+    return verdict
+
+
+def _last_user_index(messages):
+    for index in range(len(messages) - 1, -1, -1):
+        if messages[index].get('role') == 'user': return index
+    return max(0, len(messages) - 1)
+
+
+def _split_dynamic(messages):
+    """For models that do not hold the prompt themselves: keep Sage's fixed system prompt as the one leading system message and move
+    the text that changes from turn to turn behind the conversation, so everything before it is an unchanged, reusable prefix."""
+    static = _static_prompt()
+    if not messages or messages[0].get('role') != 'system' or not str(messages[0].get('content') or '').startswith(static): return messages
+    first = dict(messages[0])
+    extra = str(first['content'])[len(static):].strip()
+    first['content'] = static
+    rest = list(messages[1:])
+    if extra: rest.insert(_last_user_index(rest), {'role': 'system', 'content': extra})
+    return [first] + rest
+
+
+def _prepare(model, messages):
+    """The messages as they are sent to Ollama."""
+    if _baked_current(model): return _baked(model, messages)
+    if _config.PROMPT_CACHE and _config.CHAT_TURNS > 0: return _split_dynamic(messages)
+    return messages
+
+
+def _stable_tools(tools):
+    """Tool definitions in a fixed order: the template prints them near the start of the prompt, so the same set must render the same."""
+    return sorted(tools, key=lambda item: str((item.get('function') or {}).get('name', ''))) if tools else tools
+
+
+def _prompt_chars(data):
+    return sum(len(str(m.get('content') or '')) for m in (data.get('messages') or []))
+
+
+def _reuse_estimate(row):
+    """Share of the prompt Ollama did not have to evaluate again (estimated from characters; 3.3 characters per token)."""
+    if not row or row[6] is None or row[7] < 400: return None
+    return round(max(0.0, min(1.0, 1 - row[6] / (row[7] / 3.3))), 2)
+
 
 def model_for_request(text, use_tools=False):
     """Pick the lane. The fast lane (MODEL) answers greetings, simple questions, clarifications and confirmations.
@@ -172,7 +265,7 @@ def _background_request(messages, max_tokens, timeout, model):
         _active_background_conn=conn
     deadline=time.monotonic()+timeout
     try:
-        data={"model": model, "messages": _baked(model, messages), "stream": True, "keep_alive": "30m"}
+        data={"model": model, "messages": _prepare(model, messages), "stream": True, "keep_alive": "30m"}
         if max_tokens is not None: data['options']={"num_predict": max_tokens}
         conn.request('POST',url.path,body=json.dumps(data).encode(),headers={"Content-Type":"application/json"})
         if _background_interrupted.is_set(): raise BackgroundInterrupted('Background work yielded to chat.')
@@ -190,7 +283,7 @@ def _background_request(messages, max_tokens, timeout, model):
             if chunk.get('error'): raise OllamaError(f"Ollama request failed at {OLLAMA_URL}: {chunk['error']}")
             parts.append(chunk.get('message',{}).get('content',''))
             if chunk.get('done'):
-                _record_speed(model, chunk)
+                _record_speed(model, chunk, _prompt_chars(data))
                 break
         if _background_interrupted.is_set(): raise BackgroundInterrupted('Background work yielded to chat.')
         return {'role':'assistant','content':''.join(parts)}
@@ -252,8 +345,8 @@ def chat_stream(messages, tools=None, max_tokens=None, on_token=None, cancel=Non
         if cancel is not None:
             cancel.conn = conn
             if cancel.cancelled: raise StreamCancelled('')
-        data = {"model": model, "messages": _baked(model, messages), "stream": True, "keep_alive": "30m"}
-        if tools: data['tools'] = tools
+        data = {"model": model, "messages": _prepare(model, messages), "stream": True, "keep_alive": "30m"}
+        if tools: data['tools'] = _stable_tools(tools)
         if max_tokens is not None: data['options'] = {"num_predict": max_tokens}
         if num_ctx: data.setdefault('options', {})['num_ctx'] = int(num_ctx)
         conn.request('POST', url.path, body=json.dumps(data).encode(), headers={"Content-Type": "application/json"})
@@ -276,7 +369,7 @@ def chat_stream(messages, tools=None, max_tokens=None, on_token=None, cancel=Non
                 if on_token: on_token(piece)
             if message.get('tool_calls'): calls.extend(message['tool_calls'])
             if chunk.get('done'):
-                _record_speed(model, chunk)
+                _record_speed(model, chunk, _prompt_chars(data))
                 prompt_tokens = chunk.get('prompt_eval_count')
                 break
         if cancel is not None and cancel.cancelled: raise StreamCancelled(''.join(parts))
@@ -304,8 +397,8 @@ def chat_message(messages, tools=None, timeout=600, max_tokens=None, background=
     try:
         if background and not tools:
             return _background_request(messages, max_tokens, timeout, model)
-        data = {"model": model, "messages": _baked(model, messages), "stream": False, "keep_alive": "30m"}
-        if tools: data['tools'] = tools
+        data = {"model": model, "messages": _prepare(model, messages), "stream": False, "keep_alive": "30m"}
+        if tools: data['tools'] = _stable_tools(tools)
         if max_tokens is not None: data['options'] = {"num_predict": max_tokens}
         payload = json.dumps(data).encode()
         req = urllib.request.Request(OLLAMA_URL.rstrip('/') + '/api/chat', data=payload,
@@ -341,7 +434,7 @@ def chat_message(messages, tools=None, timeout=600, max_tokens=None, background=
                     instruction+='\nThe user explicitly asked for one of these tools. You MUST choose one of them and fill its arguments from the user message (use defaults when unspecified). Never answer from your own knowledge and never invent a result.'
                 fallback_messages=[{'role':'system','content':instruction}]+messages
                 output_schema={'type':'object','properties':{'tool':{'type':'string','enum':([] if require_tool else ['none'])+names},'arguments':{'type':'object'},'response':{'type':'string'}},'required':['tool','arguments','response'],'additionalProperties':False}
-                fallback={'model':model,'messages':_baked(model,fallback_messages),'stream':False,'keep_alive':'30m','format':output_schema,'options':{'num_predict':min(max_tokens or 256,512)}}
+                fallback={'model':model,'messages':_prepare(model,fallback_messages),'stream':False,'keep_alive':'30m','format':output_schema,'options':{'num_predict':min(max_tokens or 256,512)}}
                 retry=urllib.request.Request(OLLAMA_URL.rstrip('/')+'/api/chat',data=json.dumps(fallback).encode(),headers={'Content-Type':'application/json'},method='POST')
                 try:
                     with urllib.request.urlopen(retry,timeout=timeout) as response: fallback_data=json.loads(response.read()); _record_speed(model,fallback_data); reply=fallback_data.get('message',{})
