@@ -11,9 +11,9 @@ PLUGIN_DIR = Path(os.getenv("SAGE_PLUGINS", ROOT / "plugins"))
 STATIC_DIR = Path(__file__).parent / "static"
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
 # One context window (num_ctx) for every chat lane, background job and the VS Code endpoints. Every request sends it, so Ollama never
-# reloads a model (and drops its prompt cache) because two callers asked for different sizes. 16384 leaves room for code in VS Code and
+# reloads a model (and drops its prompt cache) because two callers asked for different sizes. 32000 leaves room for code in VS Code and
 # costs about 1 GB of KV cache on a 7B model; raise it (SAGE_NUM_CTX=32768) if VS Code still reports context_length_exceeded.
-NUM_CTX = max(2048, int(os.getenv("SAGE_NUM_CTX", "16384")))
+NUM_CTX = max(2048, int(os.getenv("SAGE_NUM_CTX", "32000")))
 # Three model lanes (see llm.model_for_request): fast = everyday replies, deep = code, tool calls and long input,
 # reasoning = math, physics and trade-off discussions. The old SAGE_MODEL and SAGE_CODING_MODEL names still work.
 FAST_MODEL = os.getenv("SAGE_FAST_MODEL", os.getenv("SAGE_MODEL", "qwen2.5:3b"))
