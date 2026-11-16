@@ -499,7 +499,7 @@ def run_job(job):
     _run_job(job)
     try:
         row=db.rows('SELECT title,status,checkpoint,kind FROM jobs WHERE id=?',(job['id'],))
-        if row and row[0]['kind'] not in ('reflection','project_plan'):
+        if row and row[0]['kind'] not in ('reflection','project_plan','capture','memory_backfill','project_state'):
             if row[0]['status']=='failed':
                 events.publish('job.failed',f"Failed: {row[0]['title']}",row[0]['checkpoint'][:240],'warning',{'job_id':job['id']})
             elif row[0]['status']=='completed' and row[0]['kind']!='project_task':
@@ -508,7 +508,7 @@ def run_job(job):
 
 def _run_job(job):
     set_status(job['id'], 'running')
-    checkpoint={'reflection':'Reviewing this conversation for useful memories and plans','learning':'Searching online sources for the requested subject'}.get(job['kind'],'Generating an initial plan/research outline with the local model')
+    checkpoint={'reflection':'Reviewing this conversation for useful memories and plans','learning':'Searching online sources for the requested subject','capture':'Extracting memories, entities and open loops from the exchange','memory_backfill':'Giving older memories tiers, entities and relations','project_state':'Updating the project state of play'}.get(job['kind'],'Generating an initial plan/research outline with the local model')
     db.execute('UPDATE jobs SET checkpoint=?,updated_at=? WHERE id=?', (checkpoint,db.now(),job['id']))
     try:
         if job['kind']=='reflection':
@@ -530,6 +530,12 @@ def _run_job(job):
         if job['kind']=='project_plan':
             from . import planner
             planner.run_plan_job(job); return
+        if job['kind'] in ('capture','memory_backfill','project_state'):
+            from . import capture, userprofile
+            if job['kind']=='capture': outcome=capture.run(job)
+            elif job['kind']=='memory_backfill': outcome=capture.run_backfill(job)
+            else: outcome=userprofile.run_refresh_job(job)
+            db.execute('UPDATE jobs SET status=?,result=?,checkpoint=?,updated_at=? WHERE id=?',('completed',outcome,outcome[:200],db.now(),job['id'])); return
         if job['kind']=='digest':
             outcome=memory.digest_day()
             db.execute('UPDATE jobs SET status=?,result=?,checkpoint=?,updated_at=? WHERE id=?',('completed',outcome,'Daily digest saved to memory',db.now(),job['id'])); return

@@ -27,7 +27,7 @@ BUILTINS = [
     ("create_project", "Create a project with a goal, next action, and optional first tasks.", {"type":"object","properties":{"name":{"type":"string"},"description":{"type":"string"},"next_action":{"type":"string"},"tasks":{"type":"array","items":{"type":"string"}}},"required":["name"]}),
     ("add_project_task", "Add a task to an existing Sage project.", {"type":"object","properties":{"project_id":{"type":"integer"},"title":{"type":"string"},"description":{"type":"string"},"priority":{"type":"string","enum":["low","medium","high"]}},"required":["project_id","title"]}),
     ("complete_project_task", "Update an existing task to todo, doing, blocked, or done. If the user explicitly resolves a blocked task's blocker or recorded project evidence confirms it is now actionable, set its status to todo. Never unblock based on assumptions.", {"type":"object","properties":{"task_id":{"type":"integer"},"status":{"type":"string","enum":["todo","doing","blocked","done"]}},"required":["task_id","status"]}),
-    ("search_memory", "Search saved Sage memories by semantic similarity, including related ideas that use different words. Uses the local Ollama embedding model.", {"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}),
+    ("search_memory", "Deep recall of everything Sage remembers. Use it for questions about the past or about what Sage knows: 'what did we decide about X', 'what do you know about X', 'when did I tell you ...', 'what did I use before'. Returns saved memories (newest wins; set include_history to also get older versions that were replaced), matching past conversation, recorded decisions and what Sage knows about the people, projects and things mentioned. Filter by tier, entity name or the last N days when the question is narrow.", {"type":"object","properties":{"query":{"type":"string"},"tier":{"type":"string","enum":["core","working","episodic","semantic","procedural"]},"entity":{"type":"string"},"days":{"type":"integer","minimum":1,"maximum":3650},"include_history":{"type":"boolean"}},"required":["query"]}),
     ("save_memory", "Save a durable user preference, fact, project detail, or learned knowledge to Sage memory and the Obsidian vault.", {"type":"object","properties":{"content":{"type":"string"},"kind":{"type":"string","enum":["preference","fact","project","knowledge"]}},"required":["content"]}),
     ("search_workshop_notebook", "Search workshop logs, measurements, reports, failures, calculations, projects, and saved memories.", {"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}),
     ("add_workshop_entry", "Record a workshop observation or build step, optionally with measurements and project id.", {"type":"object","properties":{"note":{"type":"string"},"measurements":{"type":"string"},"project_id":{"type":"integer"}},"required":["note"]}),
@@ -173,7 +173,7 @@ def definitions_for_query(query, definitions_list=None, strict=False):
         'create_project':('create a project','new project','plan a project','start a project'),
         'add_project_task':('add task','new task','task to','next task'),
         'complete_project_task':('complete task','mark task','task done','finish task','unblock task','unblock the task','clear task blocker','resolve task blocker','mark task todo'),
-        'search_memory':('remember','memory','what do you know','recall'),
+        'search_memory':('remember','memory','what do you know','recall','what did we decide','what did i say','what did i tell you','did i tell you','do you remember','we talked about','we discussed','last time we','when did i','when did we','what was the decision','what did i use before'),
         'save_memory':('remember this','save this','learn this','store in memory'),
         'search_workshop_notebook':('search notes','notebook','workshop history','when did','find in my notes'),
         'add_workshop_entry':('workshop log','log this','record measurement','build note','workshop note'),
@@ -483,7 +483,7 @@ def execute(name,args,approved=False,cancel=None):
         db.execute('UPDATE tasks SET status=? WHERE id=?',(args['status'],args['task_id']))
         return _audit(name,args,{'id':args['task_id'],'status':args['status']})
     if name=='search_memory':
-        return _audit(name,args,memory.semantic_search(str(args.get('query',''))[:1000],limit=10))
+        return _audit(name,args,memory.recall(str(args.get('query',''))[:500],tier=args.get('tier'),entity=args.get('entity'),days=args.get('days'),include_history=bool(args.get('include_history'))))
     if name=='save_memory':
         content=str(args.get('content','')).strip()
         if not content:raise ValueError('Memory content is required')

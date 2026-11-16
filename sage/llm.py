@@ -267,6 +267,7 @@ def _background_request(messages, max_tokens, timeout, model):
     try:
         data={"model": model, "messages": _prepare(model, messages), "stream": True, "keep_alive": "30m"}
         if max_tokens is not None: data['options']={"num_predict": max_tokens}
+        data.setdefault('options',{})['num_ctx']=_config.NUM_CTX   # one window for every caller, so Ollama never reloads the model for a different size
         conn.request('POST',url.path,body=json.dumps(data).encode(),headers={"Content-Type":"application/json"})
         if _background_interrupted.is_set(): raise BackgroundInterrupted('Background work yielded to chat.')
         response=conn.getresponse()
@@ -348,7 +349,7 @@ def chat_stream(messages, tools=None, max_tokens=None, on_token=None, cancel=Non
         data = {"model": model, "messages": _prepare(model, messages), "stream": True, "keep_alive": "30m"}
         if tools: data['tools'] = _stable_tools(tools)
         if max_tokens is not None: data['options'] = {"num_predict": max_tokens}
-        if num_ctx: data.setdefault('options', {})['num_ctx'] = int(num_ctx)
+        data.setdefault('options', {})['num_ctx'] = int(num_ctx or _config.NUM_CTX)
         conn.request('POST', url.path, body=json.dumps(data).encode(), headers={"Content-Type": "application/json"})
         if cancel is not None and cancel.cancelled: raise StreamCancelled('')
         response = conn.getresponse()
@@ -400,6 +401,7 @@ def chat_message(messages, tools=None, timeout=600, max_tokens=None, background=
         data = {"model": model, "messages": _prepare(model, messages), "stream": False, "keep_alive": "30m"}
         if tools: data['tools'] = _stable_tools(tools)
         if max_tokens is not None: data['options'] = {"num_predict": max_tokens}
+        data.setdefault('options', {})['num_ctx'] = _config.NUM_CTX
         payload = json.dumps(data).encode()
         req = urllib.request.Request(OLLAMA_URL.rstrip('/') + '/api/chat', data=payload,
                                      headers={"Content-Type": "application/json"}, method="POST")
@@ -434,7 +436,7 @@ def chat_message(messages, tools=None, timeout=600, max_tokens=None, background=
                     instruction+='\nThe user explicitly asked for one of these tools. You MUST choose one of them and fill its arguments from the user message (use defaults when unspecified). Never answer from your own knowledge and never invent a result.'
                 fallback_messages=[{'role':'system','content':instruction}]+messages
                 output_schema={'type':'object','properties':{'tool':{'type':'string','enum':([] if require_tool else ['none'])+names},'arguments':{'type':'object'},'response':{'type':'string'}},'required':['tool','arguments','response'],'additionalProperties':False}
-                fallback={'model':model,'messages':_prepare(model,fallback_messages),'stream':False,'keep_alive':'30m','format':output_schema,'options':{'num_predict':min(max_tokens or 256,512)}}
+                fallback={'model':model,'messages':_prepare(model,fallback_messages),'stream':False,'keep_alive':'30m','format':output_schema,'options':{'num_predict':min(max_tokens or 256,512),'num_ctx':_config.NUM_CTX}}
                 retry=urllib.request.Request(OLLAMA_URL.rstrip('/')+'/api/chat',data=json.dumps(fallback).encode(),headers={'Content-Type':'application/json'},method='POST')
                 try:
                     with urllib.request.urlopen(retry,timeout=timeout) as response: fallback_data=json.loads(response.read()); _record_speed(model,fallback_data); reply=fallback_data.get('message',{})

@@ -11,9 +11,9 @@ PLUGIN_DIR = Path(os.getenv("SAGE_PLUGINS", ROOT / "plugins"))
 STATIC_DIR = Path(__file__).parent / "static"
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
 # One context window (num_ctx) for every chat lane, background job and the VS Code endpoints. Every request sends it, so Ollama never
-# reloads a model (and drops its prompt cache) because two callers asked for different sizes. 32000 leaves room for code in VS Code and
+# reloads a model (and drops its prompt cache) because two callers asked for different sizes. 8192 leaves room for code in VS Code and
 # costs about 1 GB of KV cache on a 7B model; raise it (SAGE_NUM_CTX=32768) if VS Code still reports context_length_exceeded.
-NUM_CTX = max(2048, int(os.getenv("SAGE_NUM_CTX", "32000")))
+NUM_CTX = max(2048, int(os.getenv("SAGE_NUM_CTX", "8192")))
 # Three model lanes (see llm.model_for_request): fast = everyday replies, deep = code, tool calls and long input,
 # reasoning = math, physics and trade-off discussions. The old SAGE_MODEL and SAGE_CODING_MODEL names still work.
 FAST_MODEL = os.getenv("SAGE_FAST_MODEL", os.getenv("SAGE_MODEL", "qwen2.5:3b"))
@@ -36,7 +36,7 @@ SPEAKER_ROOM = os.getenv("SAGE_SPEAKER_ROOM", "bedroom")  # the room the speaker
 # Document question answering (see docqa.py). NUM_CTX is the whole context window Ollama allocates for a document call
 # (prompt + reply); Sage sizes every document prompt to fit inside it instead of letting Ollama silently truncate.
 DOC_MODEL = os.getenv("SAGE_DOC_MODEL", REASONING_MODEL)
-DOC_NUM_CTX = int(os.getenv("SAGE_DOC_NUM_CTX", "32000"))
+DOC_NUM_CTX = int(os.getenv("SAGE_DOC_NUM_CTX", "8192"))
 DOC_MAP_MAX_CALLS = int(os.getenv("SAGE_DOC_MAP_MAX_CALLS", "16"))  # model passes used to read a document too long for one window
 # Prompt prefix caching (see llm.py). Ollama only re-reads the part of a prompt that differs from the start of the previous one.
 # SAGE_PROMPT_CACHE=0 turns the prompt re-arranging off. SAGE_CHAT_TURNS is how many recent exchanges (question + answer) are sent as real

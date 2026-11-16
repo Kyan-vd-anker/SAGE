@@ -23,7 +23,7 @@ for (const [from, to] of [[48000, 16000], [16000, 48000], [44100, 16000], [16000
 }
 // 16-bit PCM both ways, odd byte carried to the next chunk
 const pcm = toPcm16(Float32Array.of(0, 0.5, -0.5, 1, -1, 2, -2));
-assert.deepStrictEqual(Array.from(pcm), [0, 16383, -32000, 32767, -32768, 32767, -32768]);
+assert.deepStrictEqual(Array.from(pcm), [0, 16383, -8192, 32767, -32768, 32767, -32768]);
 const bytes = new Uint8Array(pcm.buffer);
 const a = pcmBytesToFloat(bytes.subarray(0, 5), null), b = pcmBytesToFloat(bytes.subarray(5), a.carry);
 const back = concat([a.samples, b.samples]);

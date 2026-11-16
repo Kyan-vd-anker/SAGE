@@ -97,6 +97,24 @@ def init():
         c.execute("INSERT OR IGNORE INTO completed_projects(project_id,name,completed_at) SELECT id,name,created_at FROM projects WHERE status='completed'")
         _add_columns(c,'tool_approvals',{'computer_task_id':'INTEGER'})
         c.execute('UPDATE tasks SET sort_order=id*10 WHERE sort_order=0')
+        # Memory tiers, supersede history, knowledge graph and per-project state of play (see memory.py, entities.py, userprofile.py).
+        _add_columns(c,'memories',{'tier':"TEXT NOT NULL DEFAULT 'semantic'",'project_id':'INTEGER','valid_from':"TEXT NOT NULL DEFAULT ''",'valid_to':"TEXT NOT NULL DEFAULT ''",'supersedes_id':'INTEGER','superseded_by':'INTEGER','expires_at':"TEXT NOT NULL DEFAULT ''"})
+        c.executescript('''
+        CREATE TABLE IF NOT EXISTS entities(id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'thing', description TEXT NOT NULL DEFAULT '', project_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+        CREATE UNIQUE INDEX IF NOT EXISTS entities_name ON entities(lower(name));
+        CREATE TABLE IF NOT EXISTS entity_aliases(alias TEXT PRIMARY KEY, entity_id INTEGER NOT NULL);
+        CREATE INDEX IF NOT EXISTS entity_aliases_entity ON entity_aliases(entity_id);
+        CREATE TABLE IF NOT EXISTS memory_entities(memory_id INTEGER NOT NULL, entity_id INTEGER NOT NULL, PRIMARY KEY(memory_id, entity_id));
+        CREATE INDEX IF NOT EXISTS memory_entities_entity ON memory_entities(entity_id);
+        CREATE TABLE IF NOT EXISTS entity_links(src INTEGER NOT NULL, dst INTEGER NOT NULL, rel TEXT NOT NULL DEFAULT 'related', weight REAL NOT NULL DEFAULT 1, updated_at TEXT NOT NULL, PRIMARY KEY(src, dst, rel));
+        CREATE TABLE IF NOT EXISTS project_state(project_id INTEGER PRIMARY KEY, summary TEXT NOT NULL DEFAULT '', open_loops TEXT NOT NULL DEFAULT '[]', next_step TEXT NOT NULL DEFAULT '', source_msg_id INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS memories_status_tier ON memories(status, tier);
+        ''')
+        if not c.execute("SELECT 1 FROM settings WHERE key='memory_tiers_v1'").fetchone():
+            c.execute("UPDATE memories SET tier='procedural' WHERE tier='semantic' AND kind='preference'")
+            c.execute("UPDATE memories SET tier='episodic' WHERE tier='semantic' AND kind='daily_summary'")
+            c.execute("UPDATE memories SET valid_from=created_at WHERE valid_from=''")
+            c.execute("INSERT OR REPLACE INTO settings(key,value,updated_at) VALUES('memory_tiers_v1','1',?)", (now(),))
 
 def rows(sql, args=()):
     with _lock, connection() as c:
