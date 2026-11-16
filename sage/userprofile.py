@@ -93,11 +93,11 @@ def state_text(project_id, compact=False):
         loops = []
     parts = [f"STATE OF PLAY, {project[0]['name']} (updated {_age(state['updated_at'])}):"]
     if state['summary']:
-        parts.append(state['summary'])
+        parts.append(state['summary'].rstrip('. ') + '.')
     if state['next_step']:
-        parts.append('Next: ' + state['next_step'])
+        parts.append('Next: ' + state['next_step'].rstrip('. ') + '.')
     if loops:
-        parts.append('Open: ' + '; '.join(loops[:2 if compact else 5]))
+        parts.append('Open: ' + '; '.join(loops[:2 if compact else 5]) + '.')
     return ' '.join(parts)
 
 

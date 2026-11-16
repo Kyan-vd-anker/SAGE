@@ -25,12 +25,12 @@ sys.path.insert(0, str(ROOT))
 
 from sage import agent, config  # noqa: E402
 
-# Same context size everywhere: Sage's document reading also asks for 8192, and a request with a different num_ctx makes Ollama reload
-# the model and throw its prompt cache away.
+# One context size everywhere (config.NUM_CTX, default 16384). Sage sends it with every request, and a request with a different num_ctx
+# makes Ollama reload the model and throw its prompt cache away. Document reading is the one deliberate exception (SAGE_DOC_NUM_CTX).
 MODELS = [
-    ('local/sage-fast', 'qwen3.5:4b', {'num_ctx': 8192, 'temperature': 0.6, 'top_p': 0.9}),
-    ('local/sage-coder', 'qwen3.5:9b', {'num_ctx': 8192, 'temperature': 0.2, 'top_p': 0.9}),
-    ('local/sage-reason', 'qwen3.5:9b', {'num_ctx': 8192, 'temperature': 0.6, 'top_p': 0.95}),
+    ('local/sage-fast', 'qwen3.5:4b', {'num_ctx': config.NUM_CTX, 'temperature': 0.6, 'top_p': 0.9}),
+    ('local/sage-coder', 'qwen3.5:9b', {'num_ctx': config.NUM_CTX, 'temperature': 0.2, 'top_p': 0.9}),
+    ('local/sage-reason', 'qwen3.5:9b', {'num_ctx': config.NUM_CTX, 'temperature': 0.6, 'top_p': 0.95}),
 ]
 ENV_NAMES = {
     'local/sage-fast': 'SAGE_FAST_MODEL',
