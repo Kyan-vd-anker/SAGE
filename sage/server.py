@@ -137,7 +137,7 @@ class Handler(BaseHTTPRequestHandler):
         data=b'{"ok":true}'
         self.send_response(200); self.send_header('Content-Type','application/json'); self.send_header('Content-Length',str(len(data))); self.send_header('Set-Cookie',self.cookie_header('',0)); self.end_headers(); self.wfile.write(data)
     def chat_stream(self, body):
-        """Stream a chat reply as newline-delimited JSON events: start, token, status, reset, done, error."""
+        """Stream a chat reply and captured model requests as newline-delimited JSON events."""
         jobs.note_interaction(); project_id=body.get('project_id') or None
         if project_id:
             try: project_id=int(project_id)
@@ -173,7 +173,11 @@ class Handler(BaseHTTPRequestHandler):
                 alive['ok']=False; cancel.cancel()
         emit({'type':'start','id':stream_id})
         try:
-            answer=agent.respond(message,project_id=project_id,emit=emit,cancel=cancel,computer_task_id=computer_task_id,documents=documents,image_context=image_context)
+            answer=agent.respond(
+                message, project_id=project_id, emit=emit, cancel=cancel, computer_task_id=computer_task_id,
+                documents=documents, image_context=image_context,
+                on_request=lambda request: emit({'type':'prompt','request':request}),
+            )
             emit({'type':'done','answer':answer,'model':agent.answer_model(),'stopped':cancel.cancelled})
         except Exception as exc:
             emit({'type':'error','error':str(exc)})
@@ -861,7 +865,10 @@ class Handler(BaseHTTPRequestHandler):
                 try:approval_id=int(path.rsplit('/',1)[1])
                 except ValueError:return send_json(self,{'error':'Invalid approval id'},400)
                 if 'approved' not in body or not isinstance(body['approved'],bool):return send_json(self,{'error':'Choose approve or decline'},400)
-                try:return send_json(self,{'answer':agent.resolve_tool_approval(approval_id,body['approved'])})
+                requests=[]
+                try:
+                    answer=agent.resolve_tool_approval(approval_id,body['approved'],on_request=requests.append)
+                    return send_json(self,{'answer':answer,'prompts':requests})
                 except ValueError as exc:return send_json(self,{'error':str(exc)},404)
             if path=='/api/notes':
                 title=re.sub(r'[^\w -]','',str(body.get('title','')).strip()).strip()

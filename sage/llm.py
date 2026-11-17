@@ -355,7 +355,8 @@ class StreamCancel:
             except Exception: pass
 
 
-def chat_stream(messages, tools=None, max_tokens=None, on_token=None, cancel=None, timeout=600, model=None, num_ctx=None):
+def chat_stream(messages, tools=None, max_tokens=None, on_token=None, cancel=None, timeout=600, model=None, num_ctx=None,
+                on_request=None):
     """Foreground chat that streams: on_token(text) is called for every piece of text as it is generated.
     Returns the finished assistant message (content and any tool_calls). `timeout` applies to silence
     between pieces, not to the whole reply."""
@@ -380,6 +381,8 @@ def chat_stream(messages, tools=None, max_tokens=None, on_token=None, cancel=Non
         if stable_tools: data['tools'] = stable_tools
         if max_tokens is not None: data['options'] = {"num_predict": max_tokens}
         data.setdefault('options', {})['num_ctx'] = context_window
+        if on_request: on_request(data)
+        if cancel is not None and cancel.cancelled: raise StreamCancelled('')
         conn.request('POST', url.path, body=json.dumps(data).encode(), headers={"Content-Type": "application/json"})
         if cancel is not None and cancel.cancelled: raise StreamCancelled('')
         response = conn.getresponse()
@@ -419,7 +422,8 @@ def chat_stream(messages, tools=None, max_tokens=None, on_token=None, cancel=Non
         _release()
 
 
-def chat_message(messages, tools=None, timeout=600, max_tokens=None, background=False, require_tool=False, force_schema=False, model=None):
+def chat_message(messages, tools=None, timeout=600, max_tokens=None, background=False, require_tool=False, force_schema=False,
+                 model=None, on_request=None):
     global _active_background_response
     model = model or (CODING_MODEL if background else MODEL)  # unrouted background work (planning, research) uses the deep lane
     # User chat has priority over queued background model calls. In-flight
@@ -435,6 +439,7 @@ def chat_message(messages, tools=None, timeout=600, max_tokens=None, background=
         if stable_tools: data['tools'] = stable_tools
         if max_tokens is not None: data['options'] = {"num_predict": max_tokens}
         data.setdefault('options', {})['num_ctx'] = _config.NUM_CTX
+        if on_request: on_request(data)
         payload = json.dumps(data).encode()
         req = urllib.request.Request(OLLAMA_URL.rstrip('/') + '/api/chat', data=payload,
                                      headers={"Content-Type": "application/json"}, method="POST")
@@ -473,6 +478,7 @@ def chat_message(messages, tools=None, timeout=600, max_tokens=None, background=
                 fallback_tokens=min(max_tokens or 256,512)
                 _check_context_window(prepared_fallback,output_schema,fallback_tokens,_config.NUM_CTX,model)
                 fallback={'model':model,'messages':prepared_fallback,'stream':False,'keep_alive':_config.OLLAMA_KEEP_ALIVE,'format':output_schema,'options':{'num_predict':fallback_tokens,'num_ctx':_config.NUM_CTX}}
+                if on_request: on_request(fallback)
                 retry=urllib.request.Request(OLLAMA_URL.rstrip('/')+'/api/chat',data=json.dumps(fallback).encode(),headers={'Content-Type':'application/json'},method='POST')
                 try:
                     with urllib.request.urlopen(retry,timeout=timeout) as response: fallback_data=json.loads(response.read()); _record_speed(model,fallback_data); reply=fallback_data.get('message',{})

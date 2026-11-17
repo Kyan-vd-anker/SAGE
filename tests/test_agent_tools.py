@@ -22,6 +22,26 @@ class AgentToolTests(unittest.TestCase):
         self.assertEqual(model.call_count,2)
         self.assertIn('"quantity": 4.0',model.call_args_list[1].args[0][-1]['content'])
 
+    def test_prompt_capture_is_forwarded_through_tool_rounds(self):
+        replies=[
+            {'content':'','tool_calls':[{'function':{'name':'calculator','arguments':{'expression':'13+29'}}}]},
+            {'content':'The calculator returned 42.'},
+        ]
+        requests=[]
+
+        def model_reply(*args,**kwargs):
+            callback=kwargs.get('on_request')
+            if callback:callback({'model':kwargs.get('model'),'messages':list(args[0])})
+            return replies.pop(0)
+
+        with patch('sage.agent.llm.chat_message',side_effect=model_reply):
+            answer=agent.respond('Use the calculator tool to calculate 13 plus 29.',on_request=requests.append)
+
+        self.assertIn('42',answer)
+        self.assertEqual(len(requests),2)
+        self.assertEqual(requests[0]['messages'][-1]['role'],'user')
+        self.assertEqual(requests[1]['messages'][-1]['role'],'tool')
+
     def test_new_chat_input_is_capped_before_it_is_saved(self):
         with patch.object(config,'MAX_NEW_INPUT_TOKENS',3), patch('sage.agent.memory.capture') as capture:
             with self.assertRaisesRegex(ValueError,'maximum is 3'):
@@ -53,6 +73,26 @@ class AgentToolTests(unittest.TestCase):
         self.assertEqual(result,'The file has been written.')
         self.assertEqual((config.WORKSPACE/'approved.txt').read_text(encoding='utf-8'),'saved after approval')
         self.assertEqual(db.rows('SELECT status FROM tool_approvals')[0]['status'],'approved')
+
+    def test_approval_continuation_forwards_prompt_capture_callback(self):
+        approval_id=db.execute(
+            "INSERT INTO tool_approvals(tool_name,arguments_json,context_json,status,result_json,created_at,updated_at) VALUES(?,?,?,'pending','',?,?)",
+            ('workspace_write',json.dumps({'path':'approved.txt','content':'saved after approval'}),
+             json.dumps([{'role':'user','content':'Write approved.txt containing saved after approval.'}]),db.now(),db.now()),
+        )
+        requests=[]
+
+        def finish_approved_tool(messages,computer_task_id=None,on_request=None):
+            if on_request:on_request({'messages':list(messages)})
+            return 'The file has been written.'
+
+        with patch('sage.agent.tools.execute',return_value={'saved':True}), \
+                patch('sage.agent._tool_loop',side_effect=finish_approved_tool):
+            answer=agent.resolve_tool_approval(approval_id,True,on_request=requests.append)
+
+        self.assertEqual(answer,'The file has been written.')
+        self.assertEqual(len(requests),1)
+        self.assertEqual(requests[0]['messages'][-1]['role'],'tool')
 
     def test_user_can_decline_a_pending_tool(self):
         response={'content':'','tool_calls':[{'function':{'name':'launch_app','arguments':{'app':'browser'}}}]}

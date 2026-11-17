@@ -419,7 +419,7 @@ def _text_tool_calls(content,names):
         if calls:return calls,text.replace(whole,'').strip(),None,False
     return [],text,attempted,malformed
 
-def _recover_invalid_tool_response(messages,model):
+def _recover_invalid_tool_response(messages,model,on_request=None):
     latest_user=next((item.get('content','') for item in reversed(messages) if item.get('role')=='user'),'')
     retry=list(messages)
     retry.insert(1,{'role':'system','content':(
@@ -427,7 +427,7 @@ def _recover_invalid_tool_response(messages,model):
         "Answer the user's original request directly if possible. Never invent project IDs or other identifiers; "
         "if a required detail is unavailable, ask the user for it."
     )})
-    reply=llm.chat_message(retry,max_tokens=700,model=llm.model_for_request(latest_user))
+    reply=llm.chat_message(retry,max_tokens=700,model=llm.model_for_request(latest_user),on_request=on_request)
     content=str(reply.get('content','')).strip()
     _,_,attempted,malformed=_text_tool_calls(content,set())
     if reply.get('tool_calls') or attempted or malformed or not content:
@@ -470,16 +470,16 @@ def _stream_gate(emit):
         if mode=='stream':emit({'type':'token','text':state['buf']})
     return on_token
 
-def _model_round(messages,remaining,emit,cancel,model,require_tool=False):
+def _model_round(messages,remaining,emit,cancel,model,require_tool=False,on_request=None):
     """One model round: streamed to the browser when possible, otherwise the normal blocking call."""
     global _native_stream_tools
     if not emit or not _native_stream_tools:
-        return llm.chat_message(messages,tools=remaining,require_tool=require_tool,model=model)
+        return llm.chat_message(messages,tools=remaining,require_tool=require_tool,model=model,on_request=on_request)
     try:
-        return llm.chat_stream(messages,tools=remaining,on_token=_stream_gate(emit),cancel=cancel,model=model)
+        return llm.chat_stream(messages,tools=remaining,on_token=_stream_gate(emit),cancel=cancel,model=model,on_request=on_request)
     except llm.ToolsUnsupported:
         _native_stream_tools=False
-        return llm.chat_message(messages,tools=remaining,require_tool=require_tool,model=model)
+        return llm.chat_message(messages,tools=remaining,require_tool=require_tool,model=model,on_request=on_request)
 
 _UNTRUSTED_REASON="Sage read outside content (web, email, files or the screen) earlier in this request, so it checks with you before taking any action."
 
@@ -501,7 +501,8 @@ def _started_tainted(messages):
                 if tools.reads_untrusted(function.get('name',''),arguments):return True
     return False
 
-def _tool_loop(messages,max_rounds=10,forced=None,emit=None,cancel=None,model=None,computer_task_id=None,telegram_origin=False):
+def _tool_loop(messages,max_rounds=10,forced=None,emit=None,cancel=None,model=None,computer_task_id=None,telegram_origin=False,
+               on_request=None):
     if model is None:
         latest_user=next((item.get('content','') for item in reversed(messages) if item.get('role')=='user'),'')
         model=llm.model_for_request(latest_user,use_tools=True)
@@ -526,7 +527,7 @@ def _tool_loop(messages,max_rounds=10,forced=None,emit=None,cancel=None,model=No
             # The user explicitly asked for these tools/plugins: offer only them and don't allow a made-up answer.
             only=[item for item in remaining if item['function']['name'] in forced]
             if only: remaining=only; require_tool=True
-        response=_model_round(messages,remaining,emit,cancel,model,require_tool)
+        response=_model_round(messages,remaining,emit,cancel,model,require_tool,on_request)
         if computer_task_id and round_number>0 and str(response.get('content','')).strip() and emit:
             emit({'type':'status','text':'What remains: '+str(response.get('content','')).strip()[:700]})
         calls=response.get('tool_calls') or []
@@ -536,14 +537,15 @@ def _tool_loop(messages,max_rounds=10,forced=None,emit=None,cancel=None,model=No
                 response=dict(response,content=leftover)
             elif require_tool:
                 # The user explicitly asked for this tool but the model just talked: make it pick from a constrained list.
-                response=llm.chat_message(messages,tools=remaining,require_tool=True,force_schema=True,model=model)
+                response=llm.chat_message(messages,tools=remaining,require_tool=True,force_schema=True,model=model,
+                                          on_request=on_request)
                 calls=response.get('tool_calls') or []
             elif attempted:
                 # Do not expose a model-invented tool name. Recover using
                 # the tool results already present in the conversation.
-                return _recover_invalid_tool_response(messages,model)
+                return _recover_invalid_tool_response(messages,model,on_request)
             elif malformed:
-                return _recover_invalid_tool_response(messages,model)
+                return _recover_invalid_tool_response(messages,model,on_request)
         if response.get('_sage_tool_fallback'):
             json_fallback=True
             try:
@@ -557,7 +559,7 @@ def _tool_loop(messages,max_rounds=10,forced=None,emit=None,cancel=None,model=No
                 else:
                     return _save_assistant(str(response.get('content','')))
             except (ValueError,TypeError):
-                return _recover_invalid_tool_response(messages,model)
+                return _recover_invalid_tool_response(messages,model,on_request)
         if not calls:
             return _save_assistant(str(response.get('content','')).strip() or 'The requested tool completed, but returned no text summary.')
         # Dispatch one function per model round so the conversation always
@@ -659,7 +661,8 @@ def _tool_loop(messages,max_rounds=10,forced=None,emit=None,cancel=None,model=No
             clean.insert(1,{'role':'system','content':f"For the user's latest message, Sage ran the tool `{name}` and it returned:\n{content[:6000]}\n\nWrite the final reply to the user now, in natural language, using this result and the conversation so far. Do not call or mention another tool, and do not claim anything beyond the result."})
             if emit:
                 emit({'type':'reset'})
-                final=str(llm.chat_stream(clean,max_tokens=512,on_token=lambda piece:emit({'type':'token','text':piece}),cancel=cancel,model=model).get('content','')).strip()
+                final=str(llm.chat_stream(clean,max_tokens=512,on_token=lambda piece:emit({'type':'token','text':piece}),
+                                          cancel=cancel,model=model,on_request=on_request).get('content','')).strip()
             else:
                 final=llm.chat(clean,max_tokens=512,model=model).strip()
             return _save_assistant(final or _tool_result_reply(name,content))
@@ -726,7 +729,9 @@ def _respond_with_documents(user_text,documents,emit,cancel):
         emit({'type':'token','text':result.text})
     return _save_assistant(result.text,source_docs=','.join(d.doc_id for d in documents))
 
-def respond(user_text,project_id=None,emit=None,cancel=None,computer_task_id=None,allow_memory_capture=True,telegram_origin=False,conversation_source='chat',document_context='',documents=None,image_context=''):
+def respond(user_text,project_id=None,emit=None,cancel=None,computer_task_id=None,allow_memory_capture=True,
+            telegram_origin=False,conversation_source='chat',document_context='',documents=None,image_context='',
+            on_request=None):
     if not user_text.strip(): raise ValueError('Message is empty')
     estimated_input_tokens=llm.estimate_text_tokens(user_text)
     if estimated_input_tokens>config.MAX_NEW_INPUT_TOKENS:
@@ -838,11 +843,13 @@ def respond(user_text,project_id=None,emit=None,cancel=None,computer_task_id=Non
             messages[0]['content']+='\nNo tool is needed for this message. Reply directly and briefly in natural language. Never claim that you ran a tool or plugin, and never invent tool output.'
             max_tokens=128 if smalltalk else (220 if voice_path else 700)
             if emit:emit({'type':'plain'})  # no tools involved: the voice gateway may start speaking while this is written
-            if emit:reply=llm.chat_stream(messages,max_tokens=max_tokens,on_token=lambda piece:emit({'type':'token','text':piece}),cancel=cancel,model=model)
-            else:reply=llm.chat_message(messages,max_tokens=max_tokens,model=model)
+            if emit:reply=llm.chat_stream(messages,max_tokens=max_tokens,on_token=lambda piece:emit({'type':'token','text':piece}),
+                                          cancel=cancel,model=model,on_request=on_request)
+            else:reply=llm.chat_message(messages,max_tokens=max_tokens,model=model,on_request=on_request)
             answer=_save_assistant(str(reply.get('content','')).strip() or 'I could not produce an answer for that. Please try rephrasing.')
         else:
-            answer = _tool_loop(messages,forced=forced or None,emit=emit,cancel=cancel,model=model,computer_task_id=computer_task_id,telegram_origin=telegram_origin)
+            answer = _tool_loop(messages,forced=forced or None,emit=emit,cancel=cancel,model=model,
+                                computer_task_id=computer_task_id,telegram_origin=telegram_origin,on_request=on_request)
     except llm.StreamCancelled as stopped:
         if computer_task_id:computer_tasks.set_status(computer_task_id,'interrupted','Sage was stopped during this PC task. Inspect the current state before continuing.')
         partial=str(stopped.partial or '').strip()
@@ -864,7 +871,7 @@ def respond(user_text,project_id=None,emit=None,cancel=None,computer_task_id=Non
         except Exception:pass
     return answer
 
-def resolve_tool_approval(approval_id,approved):
+def resolve_tool_approval(approval_id,approved,on_request=None):
     rows=db.rows("SELECT * FROM tool_approvals WHERE id=?",(approval_id,))
     if not rows:raise ValueError('This tool request could not be found')
     if rows[0]['status']!='pending':
@@ -904,7 +911,7 @@ def resolve_tool_approval(approval_id,approved):
     else:stored_args=arguments
     db.execute('UPDATE tool_approvals SET arguments_json=?,context_json=? WHERE id=?',(json.dumps(stored_args,ensure_ascii=False),'[]',approval_id))
     messages.append({'role':'tool','tool_name':name,'content':content})
-    answer=_tool_loop(messages,computer_task_id=computer_task_id)
+    answer=_tool_loop(messages,computer_task_id=computer_task_id,on_request=on_request)
     db.execute('UPDATE tool_approvals SET answer=? WHERE id=?',(answer,approval_id))
     if computer_task_id:
         task=computer_tasks.get(computer_task_id)

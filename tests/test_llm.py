@@ -1,4 +1,6 @@
+from io import BytesIO
 import json
+from urllib.error import HTTPError
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -27,6 +29,28 @@ class LlmTests(unittest.TestCase):
         self.assertEqual(sent['model'], 'test-model')
         self.assertEqual(sent['keep_alive'], llm._config.OLLAMA_KEEP_ALIVE)
 
+    def test_chat_message_prompt_callback_receives_the_exact_request(self):
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps({'message': {'content': 'answer'}}).encode()
+        captured = []
+        with patch('sage.llm.urllib.request.urlopen', return_value=response) as urlopen:
+            llm.chat_message([{'role': 'user', 'content': 'question'}], model='test-model', on_request=captured.append)
+        self.assertEqual(captured, [json.loads(urlopen.call_args.args[0].data)])
+
+    def test_chat_message_prompt_callback_includes_tool_fallback_request(self):
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps({'message': {'content': '{"tool":"none","arguments":{},"response":"answer"}'}}).encode()
+        tool = {'type': 'function', 'function': {'name': 'test_tool', 'parameters': {'type': 'object'}}}
+        native_error = HTTPError('http://localhost/api/chat', 400, 'unsupported', None,
+                                 BytesIO(b'model does not support tools'))
+        captured = []
+        with patch('sage.llm.urllib.request.urlopen', side_effect=[native_error, response]) as urlopen, \
+                patch('sage.tools.definitions_for_query', return_value=[tool]):
+            llm.chat_message([{'role': 'user', 'content': 'question'}], tools=[tool], model='test-model',
+                             on_request=captured.append)
+        sent = [json.loads(call.args[0].data) for call in urlopen.call_args_list]
+        self.assertEqual(captured, sent)
+
     def test_chat_message_can_unload_ollama_models_after_the_request(self):
         response = MagicMock()
         response.__enter__.return_value.read.return_value = json.dumps({'message': {'content': 'answer'}}).encode()
@@ -51,6 +75,18 @@ class LlmTests(unittest.TestCase):
 
         self.assertEqual(result['content'],'answer')
         self.assertEqual(connection.call_args.kwargs['timeout'],600)
+
+    def test_chat_stream_prompt_callback_receives_the_exact_request(self):
+        response = MagicMock()
+        response.status = 200
+        response.__iter__.return_value = [b'{"message":{"content":"answer"},"done":true}\n']
+        conn = MagicMock()
+        conn.getresponse.return_value = response
+        captured = []
+        with patch('sage.llm.http.client.HTTPConnection', return_value=conn):
+            llm.chat_stream([{'role': 'user', 'content': 'question'}], model='test-model', on_request=captured.append)
+        sent = json.loads(conn.request.call_args.kwargs['body'])
+        self.assertEqual(captured, [sent])
 
     def test_model_for_request_selects_coder_for_code_and_default_for_other_requests(self):
         self.assertEqual(llm.model_for_request('Write a Python function to add two numbers.'),llm.CODING_MODEL)
