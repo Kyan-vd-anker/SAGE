@@ -11,52 +11,15 @@ if ! bash "$ROOT_DIR/scripts/install-kali-dependencies.sh"; then
   echo "Could not install Sage's Kali dependencies." >&2
   exit 1
 fi
-PYTHON="$(command -v python3)"
 if ! command -v systemctl >/dev/null 2>&1 || ! command -v loginctl >/dev/null 2>&1; then
   echo "A systemd-based Kali installation is required to install the auto-start service." >&2
   exit 1
 fi
 
-SERVICE_DIR="$HOME/.config/systemd/user"
-SERVICE_FILE="$SERVICE_DIR/sage.service"
-mkdir -p "$SERVICE_DIR"
-
-python3 - "$SERVICE_FILE" "$ROOT_DIR" "$PYTHON" <<'PY'
-from pathlib import Path
-import sys
-
-
-def systemd_quote(value):
-    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
-
-
-service_file, root_dir, python = sys.argv[1:]
-Path(service_file).write_text(
-    "\n".join(
-        [
-            "[Unit]",
-            "Description=Sage personal assistant",
-            "After=network-online.target",
-            "Wants=network-online.target",
-            "",
-            "[Service]",
-            "Type=simple",
-            f"WorkingDirectory={root_dir}",
-            f"ExecStart={systemd_quote(python)} -m sage",
-            "Environment=SAGE_HOST=127.0.0.1",
-            "Environment=SAGE_PORT=8000",
-            "Environment=PYTHONUNBUFFERED=1",
-            "Restart=on-failure",
-            "RestartSec=5",
-            "",
-            "[Install]",
-            "WantedBy=default.target",
-            "",
-        ]
-    ),
-    encoding="utf-8",
-)
-PY
+if ! bash "$ROOT_DIR/scripts/setup-kali-runtime.sh" unit; then
+  echo "Could not configure Sage's Python environment and service." >&2
+  exit 1
+fi
 
 if [[ "$(loginctl show-user "$USER" --property=Linger --value 2>/dev/null || true)" != "yes" ]]; then
   if ! command -v sudo >/dev/null 2>&1; then

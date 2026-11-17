@@ -36,7 +36,7 @@ From the Git clone on Kali, run:
 bash scripts/update-kali.sh
 ```
 
-The script checks that the checkout is clean and points to the SAGE repository, stops the user service if it is running, creates a private timestamped archive under `~/.local/state/sage/backups/`, fetches a fast-forward-only update, checks Python syntax, and restarts the service if it was running. If syntax validation or startup fails, it restores the previous source revision. The database and other `data/` files are kept in place throughout the update.
+The script checks that the checkout is clean and points to the SAGE repository, stops the user service if it is running, creates a private timestamped archive under `~/.local/state/sage/backups/`, fetches a fast-forward-only update, refreshes Sage's virtual environment and systemd service, checks Python syntax, and restarts the service if it was running. The environment is stored under `~/.local/share/sage/venv/` and shares Kali's system packages, while Schemdraw is installed into the venv. If syntax validation or startup fails, it restores the previous source revision. The database and other `data/` files are kept in place throughout the update.
 
 Keep the backup archives until you have confirmed Sage starts and your memories and projects are present. Restoring a backup is a manual step; do not extract it over a running Sage service.
 

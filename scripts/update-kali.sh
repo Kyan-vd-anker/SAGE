@@ -64,7 +64,14 @@ if ! git -C "$ROOT_DIR" merge --ff-only "origin/$branch"; then
   fail "Fast-forward update failed. Your data backup is at $backup."
 fi
 updated=1
-if ! python3 -m compileall -q "$ROOT_DIR/sage"; then
+if ! bash "$ROOT_DIR/scripts/setup-kali-runtime.sh" override; then
+  rollback_code
+  restore_service
+  fail "Could not configure the Sage Python environment. The previous source revision was restored."
+fi
+VENV_PYTHON="$HOME/.local/share/sage/venv/bin/python"
+systemctl --user daemon-reload
+if ! "$VENV_PYTHON" -m compileall -q "$ROOT_DIR/sage"; then
   rollback_code
   restore_service
   fail "Python syntax validation failed. The previous code was restored; data backup: $backup"

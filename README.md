@@ -57,7 +57,7 @@ Sign in to Tailscale on the iPhone and keep Sage's Tailscale Serve route active.
 
 ## Install on Kali Linux and start at boot
 
-The installer installs Sage's required Kali packages, including PDF extraction, plotting, local PDF attachment handling, and speaker audio support. Engineering-property calculations work with Sage's built-in approximations; optional CoolProp support can improve them when available. Phone speech recognition remains optional and uses the separate `faster-whisper` environment described below. Ollama provides the local language models.
+The installer installs Sage's required Kali packages, creates a virtual environment that can also use those system packages, installs Schemdraw there, and points the systemd user service at that environment. This avoids installing Python packages into Kali's externally managed system Python. Engineering-property calculations work with Sage's built-in approximations; optional CoolProp support can improve them when available. Phone speech recognition remains optional and uses the separate `faster-whisper` environment described below. Ollama provides the local language models.
 
 1. Install Git, then install Ollama using its official Linux instructions:
    ```
@@ -69,16 +69,17 @@ The installer installs Sage's required Kali packages, including PDF extraction, 
 3. Start Ollama and download Sage's default chat models:
    ```
    sudo systemctl enable --now ollama
-   ollama pull deepseek-r1:7b
+   ollama pull qwen2.5:3b
    ollama pull qwen2.5-coder:7b
-   ollama pull llava:7b
+   ollama pull deepseek-r1:7b
+   ollama pull qwen3.5:9b
    ```
    For semantic memory search, also run `ollama pull nomic-embed-text`.
 4. Install and start Sage's per-user systemd service:
    ```
    bash scripts/install-kali.sh
    ```
-   The installer installs or updates all required Debian packages before enabling systemd lingering for your user, so Sage starts after boot even before you log in. It starts on `127.0.0.1:8000`; open <http://127.0.0.1:8000> on the Kali PC.
+   The installer installs or updates required Debian packages before enabling systemd lingering for your user, so Sage starts after boot even before you log in. It starts on `127.0.0.1:8000`; open <http://127.0.0.1:8000> on the Kali PC. Later `update-kali.sh` runs also refresh the venv and keep the service pointed at it.
 
 ### Updating without losing data
 
@@ -177,8 +178,8 @@ Use **PC controls** to inspect Sage's live Kali screen and check system readines
 - The chat page has an opt-in wake-word listener (default “Sage”). Click “Wake word off” to enable it and grant microphone access. Browser speech recognition support is required and may use the browser's speech service; read-aloud uses browser speech synthesis.
 - The phone's **Talk to Sage** page supports microphone input and spoken replies through the Kali voice gateway. It uses local `faster-whisper` and Piper or `espeak-ng`; setup is in the [phone voice guide](VOICE-GUIDE.md).
 - The chat has two screen checks: **Kali screen** captures Sage's active Linux desktop on the host; **Share screen** uses the browser's explicit screen/window picker. Each sends one frame to local Ollama vision and discards the source image after the answer. Qwen 3.5 9B (`qwen3.5:9b`) is the default vision model; set `SAGE_VISION_MODEL` to change it. Chat also accepts PNG, JPEG, and WEBP attachments for visual questions; image descriptions are used for that reply and the original images are not retained. Image analysis refuses non-local `OLLAMA_URL` endpoints. Browser sharing requires localhost or HTTPS. Host-side capture needs `scrot` on X11 or `grim` on Wayland.
-- The **OpenSCAD 3D modeller** creates parametric `.scad` source from a description or schematic, renders a rotatable STL preview, saves each AI revision as an immutable version, and can export a dimensioned top/front/right SVG drawing with overall X/Y/Z extents. The 2D export requires the OpenSCAD CLI on `PATH` or `SAGE_OPENSCAD_PATH`; dimensions describe the mesh's overall envelope, not individual features. A `scad` code block created in Chat has an **Open in 3D modeller** action. Generated models and drawings are drafts, not engineering, fit, or printability checks.
-- **Electronics drawings** generates versioned circuit schematics as SVG using Schemdraw. Install the optional dependency in Sage's Python environment with `python -m pip install -r requirements-schemdraw.txt`. It draws circuit schematics, not PCB board outlines, footprints, copper traces, or fabrication files; use dedicated PCB CAD such as KiCad for those. Verify all generated symbols, connections, values, and ratings before building.
+- The **OpenSCAD 3D modeller** creates parametric `.scad` source from a description or schematic, renders a rotatable STL preview, saves each AI revision as an immutable version, and can export a dimensioned top/front/right SVG drawing with overall X/Y/Z extents. The 2D export requires the OpenSCAD CLI on `PATH` or `SAGE_OPENSCAD_PATH`; dimensions describe the mesh's overall envelope, not individual features. Kali Rolling no longer provides OpenSCAD through APT; use the signed Linux AppImage from the [official OpenSCAD downloads](https://openscad.org/downloads.html#linux), verify it as documented there, and set `SAGE_OPENSCAD_PATH` to its executable in the Sage systemd service. A `scad` code block created in Chat has an **Open in 3D modeller** action. Generated models and drawings are drafts, not engineering, fit, or printability checks.
+- **Electronics drawings** generates versioned circuit schematics as SVG using Schemdraw, installed into Sage's Kali virtual environment by the installer. It draws circuit schematics, not PCB board outlines, footprints, copper traces, or fabrication files; use dedicated PCB CAD such as KiCad for those. Verify all generated symbols, connections, values, and ratings before building.
 - Voice controls now show microphone/API errors in the page, support stopping dictation cleanly, and restart the wake listener after browser timeouts. Browser speech recognition still depends on support in the browser and its speech service.
 - A token-protected Home Assistant bridge accepts only the named `briefing`, `next_action`, and `project_status` requests, then returns Sage's answer for Home Assistant TTS playback. Configure `SAGE_HA_TOKEN` and `SAGE_ALLOWED_CLIENT_IPS`; the allowlist applies to all remote Sage requests. See the [Google Home Mini setup guide](outputs/google-home-mini-setup.md) for Google Assistant, Cast, and automation setup.
 - Engineering code projects stay in `data/workspace/engineering/code/`. Generated code is not run automatically; the separate Kali command tool runs with the Sage user's operating-system permissions and protects Sage's own source tree from ordinary commands.

@@ -16,7 +16,7 @@ command -v apt-get >/dev/null 2>&1 || {
 
 sudo apt-get update
 sudo apt-get install -y \
-  python3 \
+  python3-full \
   python3-venv \
   python3-pypdf \
   python3-matplotlib \
