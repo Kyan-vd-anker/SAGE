@@ -170,6 +170,15 @@ class ChatTests(Base):
         self.assertEqual((raised.exception.status, raised.exception.code), (400, 'context_length_exceeded'))
         self.assertEqual(fake.calls, [])                                       # Ollama is never asked to drop the start of the prompt
 
+    def test_context_preflight_reserves_output_and_baked_prompt_tokens(self):
+        fake = self.fake({'/api/chat': lambda body: chat_events('ok')})
+        messages = [{'role': 'user', 'content': 'x' * 14000}]
+        with self.assertRaises(vscode.ApiError) as raised:
+            self.chat(messages=messages)
+        self.assertEqual(raised.exception.code, 'context_length_exceeded')
+        self.chat(messages=messages, max_tokens=128)
+        self.assertEqual(fake.bodies('/api/chat')[0]['options']['num_predict'], 128)
+
     def test_bad_input_and_upstream_failures_are_reported_clearly(self):
         self.fake({'/api/chat': lambda body: [OSError('connection refused')]})
         for body in ({}, {'messages': []}, {'messages': ['hi']}):

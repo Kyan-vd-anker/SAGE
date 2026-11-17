@@ -21,7 +21,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, unquote, parse_qs
-from . import config, db, llm, agent, plugins, jobs, memory, engineering, openscad, outlook, tools as tool_registry, events, routes, scheduler, planner, reminders, system_control, computer_tasks, telegram, vscode
+from . import config, db, llm, agent, plugins, jobs, memory, engineering, openscad, prototype, outlook, tools as tool_registry, events, routes, scheduler, planner, reminders, system_control, computer_tasks, telegram, vscode
 
 STREAMS={}  # active streaming replies by id, so the Stop button can cancel them
 WALL_CACHE={'ollama_at':0.0,'ollama':{},'events_at':0.0,'events':[]}
@@ -323,6 +323,14 @@ class Handler(BaseHTTPRequestHandler):
             try: source=openscad.mesh_path(version_id)
             except ValueError as exc: return send_json(self,{'error':str(exc)},404)
             if source is None: return send_json(self,{'error':'This version has no rendered preview'},404)
+            data=source.read_bytes()
+            self.send_response(200); self.send_header('Content-Type','model/stl'); self.send_header('Content-Length',str(len(data))); self.send_header('Cache-Control','no-store'); self.send_header('X-Content-Type-Options','nosniff'); self.end_headers(); self.wfile.write(data); return
+        if path.startswith('/api/prototypes/versions/') and path.endswith('/mesh'):
+            try: version_id=int(path.split('/')[-2])
+            except ValueError: return send_json(self,{'error':'Invalid prototype version id'},400)
+            try: source=prototype.mesh_path(version_id)
+            except ValueError as exc: return send_json(self,{'error':str(exc)},404)
+            if source is None: return send_json(self,{'error':'This prototype version has no rendered preview'},404)
             data=source.read_bytes()
             self.send_response(200); self.send_header('Content-Type','model/stl'); self.send_header('Content-Length',str(len(data))); self.send_header('Cache-Control','no-store'); self.send_header('X-Content-Type-Options','nosniff'); self.end_headers(); self.wfile.write(data); return
         if path=='/': return self.serve_file(config.STATIC_DIR/'index.html')
@@ -629,6 +637,16 @@ class Handler(BaseHTTPRequestHandler):
             body=payload(self, limit=32_000_000 if path in ('/api/import','/api/chat/stream','/api/openscad/designs') or path.startswith('/api/openscad/designs/') else 12_000_000 if path == '/api/studio/paper/read' else 7_000_000 if path in ('/api/screen/describe','/api/studio/import') else 1_000_000)
             handled,value=routes.post(path,body)
             if handled: return send_json(self,value)
+            if path=='/api/chat/explanation':
+                try:
+                    summary=agent.explain_answer(body.get('question'),body.get('answer'))
+                except ValueError as exc:
+                    return send_json(self,{'error':str(exc)},400)
+                except llm.OllamaError as exc:
+                    return send_json(self,{'error':str(exc)},503)
+                except RuntimeError as exc:
+                    return send_json(self,{'error':str(exc)},502)
+                return send_json(self,{'summary':summary})
             if path=='/api/system/screen':
                 question=str(body.get('question') or 'Describe the current desktop, including the visible app and any dialog or buttons.')[:1000]
                 try:return send_json(self,system_control.inspect_screen(question,include_preview=True))

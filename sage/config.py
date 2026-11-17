@@ -11,10 +11,13 @@ PLUGIN_DIR = Path(os.getenv("SAGE_PLUGINS", ROOT / "plugins"))
 STATIC_DIR = Path(__file__).parent / "static"
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
 OLLAMA_KEEP_ALIVE = os.getenv("SAGE_OLLAMA_KEEP_ALIVE", "30m")  # set to 0 to unload each model after a request
-# One context window (num_ctx) for every chat lane, background job and the VS Code endpoints. Every request sends it, so Ollama never
-# reloads a model (and drops its prompt cache) because two callers asked for different sizes. 16384 leaves room for code in VS Code and
-# costs roughly 1 GB of KV cache on a classic 7B model (less on the hybrid-attention qwen3.5 models); raise it (SAGE_NUM_CTX=32768) if VS Code still reports context_length_exceeded.
-NUM_CTX = max(2048, int(os.getenv("SAGE_NUM_CTX", "16384")))
+# One context window (num_ctx) for every chat lane, background job and VS Code endpoint. A 64K window can use several GB of KV cache;
+# lower SAGE_NUM_CTX if Ollama runs out of memory or becomes too slow.
+NUM_CTX = max(2048, int(os.getenv("SAGE_NUM_CTX", "65536")))
+_default_new_input_tokens = min(8192, NUM_CTX // 2)
+MAX_NEW_INPUT_TOKENS = int(os.getenv("SAGE_MAX_NEW_INPUT_TOKENS", str(_default_new_input_tokens)))
+if not 1 <= MAX_NEW_INPUT_TOKENS < NUM_CTX:
+    raise ValueError("SAGE_MAX_NEW_INPUT_TOKENS must be positive and smaller than SAGE_NUM_CTX")
 # Three model lanes (see llm.model_for_request): fast = everyday replies, deep = code, tool calls and long input,
 # reasoning = math, physics and trade-off discussions. The old SAGE_MODEL and SAGE_CODING_MODEL names still work.
 FAST_MODEL = os.getenv("SAGE_FAST_MODEL", os.getenv("SAGE_MODEL", "qwen2.5:3b"))

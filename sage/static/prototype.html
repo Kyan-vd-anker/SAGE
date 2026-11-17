@@ -1,0 +1,46 @@
+<section id="page-prototype" class="page">
+  <div class="sectionHead">
+    <div><h2>Prototype designer</h2><p>Turn one brief into a coordinated, versioned draft package: requirements, candidate parts, pin map, firmware, schematic, and OpenSCAD model.</p></div>
+  </div>
+  <p class="safetyNotice">Generated designs are unverified drafts. Check datasheets, voltage/current limits, pin mappings, code, dimensions, and clearances before building. Sage will not flash firmware or certify a design.</p>
+  <div class="prototypeLayout">
+    <div class="prototypeMain">
+      <form id="prototypeForm" class="formCard">
+        <div class="row"><input id="prototypeTitle" maxlength="120" placeholder="Prototype name"><select id="prototypeProject"><option value="">No linked project</option></select></div>
+        <textarea id="prototypePrompt" rows="4" maxlength="4000" placeholder="Describe what it should do, target board, sensors or motors, power source, size, and constraints…" required></textarea>
+        <div class="row"><button id="prototypeNew" class="softBtn" type="button">New prototype</button><button id="prototypeGenerate" class="primary" type="submit">Generate prototype package</button><button id="prototypeRevise" class="primary" type="button" disabled>Revise selected prototype</button></div>
+        <p id="prototypeStatus" class="meta" role="status"></p>
+      </form>
+      <article class="card">
+        <div class="prototypeHeading"><h3>Design plan</h3><span class="pill">Candidate parts · review required</span></div>
+        <p id="prototypeSummary" class="meta">Generate or open a prototype to inspect its plan.</p>
+        <details><summary>Requirements, assumptions, and validation</summary><div id="prototypeRequirements"></div><h4>Assumptions / open questions</h4><ul id="prototypeAssumptions"></ul><h4>Suggested validation steps</h4><ol id="prototypeValidation"></ol></details>
+        <details><summary>Candidate bill of materials</summary><div id="prototypeBom"></div></details>
+        <details><summary>Pin map and connections</summary><div id="prototypeConnections"></div></details>
+        <details><summary>Edit plan JSON</summary><textarea id="prototypePlan" class="prototypeCode" spellcheck="false" aria-label="Editable prototype plan JSON"></textarea></details>
+      </article>
+      <article class="card">
+        <div class="prototypeHeading"><h3>Firmware</h3><button id="prototypeFirmwareDownload" class="softBtn" type="button" disabled>Download firmware</button></div>
+        <p id="prototypeFirmwareLanguage" class="meta">Generated firmware is a draft and has not been run on hardware.</p>
+        <textarea id="prototypeFirmware" class="prototypeCode" spellcheck="false" aria-label="Editable prototype firmware" placeholder="Generated firmware appears here." disabled></textarea>
+      </article>
+      <article class="card schematicPreviewCard">
+        <div class="prototypeHeading"><h3>Electronics schematic</h3><button id="prototypeSchematicDownload" class="softBtn" type="button" disabled>Download SVG</button></div>
+        <p id="prototypeSchematicStatus" class="meta">The schematic will appear here when generated.</p>
+        <img id="prototypeSchematicPreview" alt="Prototype electronics schematic" hidden>
+        <details><summary>Edit schematic specification</summary><textarea id="prototypeSchematicSpec" class="prototypeCode" spellcheck="false" aria-label="Editable schematic specification"></textarea></details>
+      </article>
+      <article class="card prototypeCadCard">
+        <div class="prototypeHeading"><h3>Mechanical model</h3><button id="prototypeCadDownload" class="softBtn" type="button" disabled>Download .scad</button></div>
+        <canvas id="prototypeCanvas" aria-label="Rotatable prototype STL preview"></canvas>
+        <p id="prototypeCadStatus" class="meta">The preview will appear here when OpenSCAD rendering is available.</p>
+        <details><summary>Edit OpenSCAD source</summary><textarea id="prototypeCadSource" class="prototypeCode" spellcheck="false" aria-label="Editable OpenSCAD source"></textarea></details>
+      </article>
+      <article class="card">
+        <div class="prototypeHeading"><h3>Save edited artifacts as a new version</h3><select id="prototypeVersion" aria-label="Prototype version"></select></div>
+        <div class="row"><input id="prototypeNotes" maxlength="2000" placeholder="Version notes (optional)"><button id="prototypeSave" class="primary" type="button" disabled>Save new version</button></div>
+      </article>
+    </div>
+    <aside class="card prototypeDesigns"><h3>Saved prototypes</h3><div id="prototypeDesignList" class="cards"><p class="meta">Loading prototypes…</p></div></aside>
+  </div>
+</section>

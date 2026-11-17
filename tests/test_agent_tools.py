@@ -22,6 +22,13 @@ class AgentToolTests(unittest.TestCase):
         self.assertEqual(model.call_count,2)
         self.assertIn('"quantity": 4.0',model.call_args_list[1].args[0][-1]['content'])
 
+    def test_new_chat_input_is_capped_before_it_is_saved(self):
+        with patch.object(config,'MAX_NEW_INPUT_TOKENS',3), patch('sage.agent.memory.capture') as capture:
+            with self.assertRaisesRegex(ValueError,'maximum is 3'):
+                agent.respond('abcdefghij')
+        self.assertEqual(db.rows('SELECT role,content FROM messages'),[])
+        capture.assert_not_called()
+
     def test_llama_json_fallback_can_select_a_plugin_tool(self):
         reply={'content':json.dumps({'tool':'calculator','arguments':{'expression':'13+29'},'response':''}),'_sage_tool_fallback':True}
         with patch('sage.agent.llm.chat_message',return_value=reply), patch('sage.agent.llm.chat',return_value='The calculator returned 42.'):
@@ -202,6 +209,18 @@ class AgentToolTests(unittest.TestCase):
         self.assertIn(entries[2][1],selected)
         self.assertNotIn(entries[0][1],selected)
         self.assertNotIn(entries[1][1],selected)
+
+    def test_relevant_context_fills_a_character_budget_with_more_matches(self):
+        memories=[
+            {'id':item_id,'content':f'ROV propulsion requirement {item_id} '+'x'*80,'kind':'project','relevance_score':1.0-item_id/100}
+            for item_id in range(1,7)
+        ]
+        with patch('sage.agent.memory.relevant',return_value=memories):
+            history,selected=agent._relevant_context('ROV propulsion requirements',limit=10,context_budget_chars=750)
+        self.assertEqual(history,[])
+        self.assertGreater(len(selected),3)
+        used=sum(len(json.dumps(item['content'],ensure_ascii=False))+64 for item in selected)
+        self.assertLessEqual(used,750)
 
     def test_speaker_context_keeps_recent_turns_for_follow_up_questions(self):
         entries=[

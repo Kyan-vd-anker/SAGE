@@ -69,6 +69,26 @@ class SchematicTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'coordinates must be finite'):
             schematic._validate_spec(invalid)
 
+    def test_generic_ic_pin_anchors_connect_to_motor_and_render(self):
+        spec = {
+            'components': [
+                {'id': 'U1', 'symbol': 'ic', 'label': 'Controller', 'x': 0, 'y': 0, 'angle': 0,
+                 'pins': [{'number': '1', 'name': 'MOTOR_EN', 'side': 'R', 'anchor': 'motor_en'},
+                          {'number': '2', 'name': 'GND', 'side': 'B', 'anchor': 'gnd'}]},
+                {'id': 'M1', 'symbol': 'motor', 'label': 'DC motor', 'x': 8, 'y': 0, 'angle': 0},
+            ],
+            'wires': [{'from': {'component': 'U1', 'anchor': 'motor_en'},
+                       'to': {'component': 'M1', 'anchor': 'start'}, 'via': []}],
+            'junctions': [],
+        }
+        clean = schematic._validate_spec(spec)
+        self.assertEqual(clean['components'][0]['pins'][0]['anchor'], 'motor_en')
+        self.assertEqual(clean['wires'][0]['to']['anchor'], 'start')
+        if not HAS_SCHEMDRAW:
+            self.skipTest('schemdraw is not installed')
+        svg = schematic._render_svg(clean)
+        self.assertIn('<svg', svg)
+
     def test_http_routes_create_and_load_schematic_versions(self):
         with patch('sage.schematic._render_svg', return_value='<svg xmlns="http://www.w3.org/2000/svg"></svg>'):
             handled, result = routes.post('/api/schematics/designs', {

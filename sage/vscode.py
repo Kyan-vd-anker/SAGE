@@ -240,8 +240,12 @@ def _openai_tool_calls(calls, with_index=False):
     return out
 
 
-def _estimate_tokens(messages, tools):
-    return int((sum(len(str(m.get('content') or '')) for m in messages) + len(json.dumps(tools or []))) / 3.0) + 8 * len(messages)
+def _estimate_tokens(messages, tools, model=None):
+    chars = sum(len(str(m.get('content') or '')) for m in messages) + len(json.dumps(tools or []))
+    if model and str(model).rsplit('/', 1)[-1].startswith('sage-') and (not messages or messages[0].get('role') != 'system'):
+        from . import agent
+        chars += len(agent.SYSTEM)
+    return int(chars / 3.0) + 8 * len(messages)
 
 
 def _chat_request(body):
@@ -249,20 +253,21 @@ def _chat_request(body):
     messages = to_ollama_messages(body.get('messages'))
     tools = body.get('tools') if isinstance(body.get('tools'), list) and body.get('tools') else None
     num_ctx = config.VSCODE_NUM_CTX
-    need = _estimate_tokens(messages, tools)
-    if need > num_ctx - 256:
-        # Ollama would silently drop the start of the prompt. Say so instead, so the extension can send less.
-        raise ApiError(400, f'This request needs about {need} tokens of context but {lane} has a window of {num_ctx}. Send less code or history.', 'context_length_exceeded')
-    options = {'num_ctx': num_ctx}
-    for source, target in (('temperature', 'temperature'), ('top_p', 'top_p'), ('seed', 'seed')):
-        if body.get(source) is not None:
-            options[target] = body[source]
     limit = body.get('max_completion_tokens') or body.get('max_tokens')
     try:
         limit = int(limit) if limit else (4096 if think else 2048)
     except (TypeError, ValueError):
         limit = 2048
-    options['num_predict'] = max(limit, 2048) if think else max(1, limit)      # thinking tokens count: leave room for the answer
+    num_predict = max(limit, 2048) if think else max(1, limit)
+    need = _estimate_tokens(messages, tools, model)
+    if need + num_predict > num_ctx - 256:
+        # Ollama would silently drop the start of the prompt. Say so instead, so the extension can send less.
+        raise ApiError(400, f'This request needs about {need} prompt tokens and {num_predict} output tokens but {lane} has a window of {num_ctx}. Send less code or history.', 'context_length_exceeded')
+    options = {'num_ctx': num_ctx}
+    for source, target in (('temperature', 'temperature'), ('top_p', 'top_p'), ('seed', 'seed')):
+        if body.get(source) is not None:
+            options[target] = body[source]
+    options['num_predict'] = num_predict                                      # thinking tokens count: leave room for the answer
     stop = body.get('stop')
     if stop:
         options['stop'] = [stop] if isinstance(stop, str) else [str(s) for s in stop][:4]

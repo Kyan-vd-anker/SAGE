@@ -5,6 +5,7 @@ function showForm(id){$('#'+id).classList.toggle('hidden')}
 const pages={studio:['Studio','Write LaTeX, documents and sheets with Sage reading along'],bench:['Bench mode','Hands-free notes for one selected project'],measurements:['Measurements','Repeatable measurement templates and runs'],decisions:['Decision log','Chosen options and recorded rationale'],'session-review':['Session review','Approve work summaries before saving'],backups:['Backups','Create or restore a local Sage backup'],chat:['Chat','A private assistant running on your machine'],system:['PC controls','Sage desktop and file access on Kali'],briefing:['Daily briefing','A quick view of what needs attention today'],checkins:['Project check-ins','Projects that may need an update'],focus:['Focus mode','Choose a goal and protect a block of time'],projects:['Projects','Goals, next actions, and tasks'],workshop:['Workshop log','Capture build notes, photos, and measurements'],'notebook-search':['Notebook search','Search your engineering history'],'inventory':['Parts inventory','Track stock, locations, and low-stock levels'],troubleshooting:['Troubleshooting','Run repeatable diagnostic guides'],versions:['Design versions','Immutable snapshots of imported design files'],handoffs:['Project handoffs','Generate a clear resume-ready project summary'],failures:['Failures & lessons','Record root causes and prevent repeat failures'],tailscale:['Private remote access','Connect over your private Tailscale network'],calculations:['Engineering calculations','Formula-driven results with explicit assumptions'],verification:['Test plans & reviews','Draft, record, and review engineering checks'],assets:['CAD & BOM','Keep engineering files and basic design metadata'],bom:['BOM builder','Create a parts list for an engineering project'],'code-lab':['Engineering code lab','Generate code projects and review their tests'],jobs:['Background work','Long assignments are planned and worked in chunks'],research:['Research','Reports with source links, saved to your vault'],learner:['Learner','Topics Sage studies and remembers while idle'],imports:['Import files','Add local notes and reference files'],memory:['Memory','Saved knowledge with provenance'],knowledge:['Knowledge graph','Obsidian-compatible linked notes'],plugins:['Tools & plugins','Discoverable capabilities with declared permissions'],logs:['Action log','A record of tool actions and previews']};
 pages.openscad=['OpenSCAD 3D modeller','Generate, render, revise, and version local OpenSCAD designs'];
 pages.electronics=['Electronics drawings','Generate versioned circuit schematics with Schemdraw'];
+pages.prototype=['Prototype designer','Coordinate a versioned draft of the plan, firmware, electronics, and CAD'];
 const nav=$('#nav'),navGroups=[
   {name:'Assistant',pages:['chat','studio','planner','briefing']},
   {name:'Projects',pages:['checkins','focus','projects','session-review']},
@@ -22,9 +23,10 @@ function groupNavigation(){
     details.querySelector('.navGroupItems').append(button);
   }
 }
-navGroups.find(group=>group.name==='Workshop').pages.push('openscad','electronics');
+navGroups.find(group=>group.name==='Workshop').pages.push('openscad','electronics','prototype');
 navGroupByPage.set('openscad',navGroups.find(group=>group.name==='Workshop'));
 navGroupByPage.set('electronics',navGroups.find(group=>group.name==='Workshop'));
+navGroupByPage.set('prototype',navGroups.find(group=>group.name==='Workshop'));
 groupNavigation();
 new MutationObserver(groupNavigation).observe(nav,{childList:true});
 const mobileNav=matchMedia('(max-width: 760px)'),sidebar=$('#sidebar'),navToggle=$('#navToggle');
@@ -53,7 +55,94 @@ function bytesToBase64(buffer){let bytes=new Uint8Array(buffer),out='';for(let i
 if($('#chatFilesBtn')&&$('#chatFiles')){$('#chatFilesBtn').onclick=()=>$('#chatFiles').click();$('#chatFiles').onchange=()=>{$('#chatFileList').innerHTML=[...$('#chatFiles').files].map(file=>`<span class="chatFile">📎 ${esc(file.name)}</span>`).join('')}}
 async function selectedChatFiles(){let files=[...($('#chatFiles')?.files||[])];if(files.length>5)throw Error('Select no more than 5 files.');let total=0;return Promise.all(files.map(async file=>{if(file.size>8_000_000)throw Error(`${file.name} is larger than 8 MB.`);total+=file.size;if(total>18_000_000)throw Error('Selected files must total 18 MB or less.');return{name:file.name,data_b64:bytesToBase64(await file.arrayBuffer())}}))}
 async function send(messageOverride=null,computerTaskId=null){let input=$('#chatInput'),text=messageOverride||input.value.trim();if(!text)return;if(sageBusy){toast('Sage is still answering. Press Stop to interrupt.');return}sageBusy=true;input.value='';let fileNames=[...($('#chatFiles')?.files||[])].map(file=>file.name);bubble('user',text,null,fileNames);let log=$('#chatLog'),d=document.createElement('div');d.className='bubble assistant streaming';d.innerHTML='<span class="who">Sage</span><span class="streamStatus">thinking…</span><div class="streamBody"></div>';log.append(d);log.scrollTop=log.scrollHeight;let statusEl=d.querySelector('.streamStatus'),bodyEl=d.querySelector('.streamBody'),acc='',finalText=null,finalModel=null,frame=0;const paint=()=>{frame=0;const stick=log.scrollHeight-log.scrollTop-log.clientHeight<90;bodyEl.innerHTML=assistantMarkup(acc)+'<span class="caret"></span>';if(stick)log.scrollTop=log.scrollHeight};let id=(window.crypto&&crypto.randomUUID)?crypto.randomUUID():String(Date.now())+Math.random().toString(16).slice(2),ctrl=new AbortController();sageStream={id,ctrl,stopped:false};$('#sendBtn').textContent='Stop ■';$('#sendBtn').classList.add('stopMode');try{const documents=await selectedChatFiles();const res=await fetch('/api/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,message:text,project_id:$('#chatProject').value||null,computer_task_id:computerTaskId,documents}),signal:ctrl.signal});if(!res.ok){let x={};try{x=await res.json()}catch{}throw Error(x.error||`Request failed (${res.status})`)}const reader=res.body.getReader(),dec=new TextDecoder();let buf='';for(;;){const {value,done}=await reader.read();if(done)break;buf+=dec.decode(value,{stream:true});let nl;while((nl=buf.indexOf('\n'))>=0){const line=buf.slice(0,nl).trim();buf=buf.slice(nl+1);if(!line)continue;let ev;try{ev=JSON.parse(line)}catch{continue}if(ev.type==='token'){acc+=ev.text;if(statusEl.textContent)statusEl.textContent='';if(!frame)frame=requestAnimationFrame(paint)}else if(ev.type==='status'){statusEl.textContent=ev.text}else if(ev.type==='reset'){acc='';bodyEl.innerHTML=''}else if(ev.type==='done'){finalText=ev.answer;finalModel=ev.model||null}else if(ev.type==='error'){throw Error(ev.error)}}}if(finalText===null&&!acc.trim())throw Error('Sage returned no reply.');d.remove();let answer=finalText!==null?finalText:acc;bubble('assistant',answer,finalModel);loadToolApprovals();loadComputerTaskRecovery();if(window.sageSpeak&&answer)speechSynthesis.speak(new SpeechSynthesisUtterance(answer))}catch(e){d.remove();if(e.name==='AbortError')bubble('assistant',(acc.trim()?acc.trim()+'\n\n':'')+'*(stopped)*');else if(acc.trim())bubble('assistant',acc.trim()+'\n\n*(connection lost: '+e.message+')*');else bubble('assistant',e.message.startsWith('Cannot reach')||e.message.startsWith('Request failed')?'I could not reach the local model: '+e.message:e.message)}finally{loadComputerTaskRecovery();if(frame)cancelAnimationFrame(frame);d.remove();sageStream=null;sageBusy=false;$('#sendBtn').textContent='Send ↑';$('#sendBtn').classList.remove('stopMode');$('#sendBtn').disabled=false;if(wakeEnabled){wakeBusy=false;voiceStatus(`Wake word is listening. Say “${wakePhrase}”.`);const rec=wakeRecognition;if(rec){wakeRestartTimer=setTimeout(()=>{wakeRestartTimer=null;if(!wakeEnabled||wakeRecognition!==rec)return;try{rec.start()}catch(e){voiceStatus(`Wake-word listener stopped: ${e.message}. Press the microphone button to retry.`,true);stopWake()}},900)}}} }
-$('#sendBtn').onclick=()=>sageBusy?stopReply():send();async function captureScreen(){
+$('#sendBtn').onclick=()=>sageBusy?stopReply():send();async function stripPrivateThinking(text){return String(text??'').replace(/<think>[\s\S]*?<\/think>/gi,'').replace(/<think>[\s\S]*$/gi,'')}
+const assistantMarkupWithoutPrivateThinking=assistantMarkup;
+assistantMarkup=function(text){return assistantMarkupWithoutPrivateThinking(stripPrivateThinking(text))};
+let thoughtContext=null;
+function thoughtPanel(question,answer,steps){
+ const panel=document.createElement('details');panel.className='thoughtPanel';
+ const title=document.createElement('summary');title.textContent='Thought summary / progress';panel.append(title);
+ const list=document.createElement('ol');list.className='thoughtSteps';
+ if(steps.length)steps.forEach(step=>{const item=document.createElement('li');item.textContent=step;list.append(item)});
+ else{const item=document.createElement('li');item.textContent='No additional progress details were reported for this reply.';list.append(item)}
+ panel.append(list);
+ const button=document.createElement('button');button.type='button';button.className='thoughtExplain softBtn';button.textContent='Show concise explanation';
+ const output=document.createElement('p');output.className='thoughtExplanation';output.hidden=true;
+ if(!question||!answer||question.length>4000||answer.length>12000){button.disabled=true;output.hidden=false;output.textContent='A summary is unavailable for this exchange.'}
+ panel.explanationRequest={question,answer};panel.append(button,output);
+ const note=document.createElement('p');note.className='meta thoughtNote';note.textContent='A high-level summary of key factors, not private chain-of-thought.';panel.append(note);
+ return panel;
+}
+const bubbleWithoutThoughtSummary=bubble;
+bubble=function(role,text,model=null,attachments=[]){
+ if(role==='user'){
+  const question=String(text||'').trim();
+  if(!thoughtContext||thoughtContext.question!==question)thoughtContext={question,steps:[]};
+ }
+ bubbleWithoutThoughtSummary(role,text,model,attachments);
+ if(role==='assistant'){
+  const context=thoughtContext;
+  const element=$('#chatLog').lastElementChild;
+  if(element){element.append(thoughtPanel(context?.question||'',stripPrivateThinking(text),context?.steps||[]));$('#chatLog').scrollTop=$('#chatLog').scrollHeight}
+  thoughtContext=null;
+ }
+};
+function safeThoughtProgress(text){
+ const raw=String(text||'').trim();
+ if(!raw)return '';
+ if(/^searching the web/i.test(raw))return 'Searching available sources.';
+ if(/^inspecting the kali screen/i.test(raw))return 'Checking the desktop before taking an action.';
+ if(/^restoring the saved pc task/i.test(raw))return 'Checking the current state before resuming the saved task.';
+ if(/^what remains:/i.test(raw))return 'Reviewing the saved task state.';
+ if(/^using /i.test(raw))return 'Using an available tool to gather information or perform the requested action.';
+ return 'Working through the request.';
+}
+function recordThoughtProgress(step,list){
+ if(!thoughtContext||!step||thoughtContext.steps.includes(step))return;
+ if(thoughtContext.steps.length>=12)return;
+ thoughtContext.steps.push(step);
+ const item=document.createElement('li');item.textContent=step;list?.append(item);
+}
+function prepareStreamingThoughts(stream){
+ if(stream.querySelector('.thoughtPanel'))return;
+ const panel=document.createElement('details');panel.className='thoughtPanel liveThoughtPanel';
+ const title=document.createElement('summary');title.textContent='Thinking / progress';panel.append(title);
+ const list=document.createElement('ol');list.className='thoughtSteps';panel.append(list);
+ stream.querySelector('.streamBody')?.before(panel);
+ recordThoughtProgress('Working through your request.',list);
+}
+const sendWithoutThoughtSummary=send;
+send=async function(messageOverride=null,computerTaskId=null){
+ if(!sageBusy){
+  const question=String(messageOverride||$('#chatInput').value.trim()).trim();
+  thoughtContext={question,steps:[]};
+ }
+ return sendWithoutThoughtSummary(messageOverride,computerTaskId);
+};
+document.addEventListener('click',async event=>{
+ const button=event.target.closest('.thoughtExplain');if(!button||button.disabled)return;
+ const panel=button.closest('.thoughtPanel'),output=panel?.querySelector('.thoughtExplanation');if(!panel||!output||panel.dataset.loaded)return;
+ button.disabled=true;output.hidden=false;output.textContent='Preparing a concise explanation…';
+ try{const result=await api('/api/chat/explanation',panel.explanationRequest);output.textContent=result.summary;panel.dataset.loaded='1'}
+ catch(error){output.textContent=`Could not load explanation: ${error.message}`;button.disabled=false}
+});
+const chatThoughtObserver=new MutationObserver(records=>{
+ for(const record of records){
+  if(record.type==='childList'&&record.target.id==='chatLog')for(const node of record.addedNodes)if(node.nodeType===1&&node.classList.contains('streaming'))prepareStreamingThoughts(node);
+  const target=record.target.nodeType===1?record.target:record.target.parentElement;
+  const status=target?.closest?.('.streamStatus');
+  if(status&&status.closest('.streaming')&&status.textContent!==status.dataset.safeThought){
+   const safe=safeThoughtProgress(status.textContent);
+   if(safe){status.dataset.safeThought=safe;status.textContent=safe;recordThoughtProgress(safe,status.closest('.streaming').querySelector('.thoughtSteps'))}
+  }
+  const body=target?.closest?.('.streamBody');
+  if(record.type==='childList'&&record.removedNodes.length&&body&&!body.textContent.trim()){
+   recordThoughtProgress('Reviewing results and preparing a response.',body.closest('.streaming')?.querySelector('.thoughtSteps'));
+  }
+ }
+});
+chatThoughtObserver.observe($('#chatLog'),{childList:true,subtree:true,characterData:true});
+async function captureScreen(){
  const button=$('#screenBtn'),hint=$('#screenHint');
  if(!window.isSecureContext||!navigator.mediaDevices?.getDisplayMedia){hint.textContent='Screen sharing requires Sage to be open on localhost or through HTTPS, and a supported browser.';return}
  if(sageBusy){toast('Wait for Sage to finish its current reply first.');return}
@@ -167,7 +256,7 @@ async function loadCodeProjects(){await loadEngineeringOptions();let x=await api
 async function runProjectTests(id){if(!confirm('Review the generated files first. Running tests executes Python code with this account’s permissions, and is not a system sandbox. Run the project tests?'))return;try{let first=await api('/api/engineering/code-projects/'+id+'/tests',{approved:false});if(first.status==='pending_approval'){let out=await api('/api/engineering/code-projects/'+id+'/tests',{approved:true});$('#codeProjects').insertAdjacentHTML('afterbegin',`<article class="card testOutput"><h3>Test run · ${esc(out.status)}</h3><pre class="engineeringBody">${esc(out.output||out.message||'No test files found.')}</pre><p class="meta">${esc(out.warning||'')}</p></article>`);toast('Test run '+out.status)}}catch(e){toast(e.message)}}
 async function loadPage(p){({bench:loadBench,measurements:loadMeasurements,decisions:loadDecisions,'session-review':loadSummaries,backups:loadBackups,system:loadSystemHealth,briefing:loadBriefing,checkins:loadCheckins,focus:loadFocus,projects:loadProjects,workshop:loadWorkshop,'notebook-search':()=>{$('#notebookResults').innerHTML=''},inventory:loadInventory,troubleshooting:loadTroubleshooting,versions:loadVersions,handoffs:loadHandoffs,failures:loadFailures,tailscale:loadTailscale,calculations:loadEngineeringOptions,verification:loadEngineeringDocs,assets:loadAssets,bom:loadEngineeringOptions,'code-lab':loadCodeProjects,jobs:loadJobs,research:loadResearch,learner:loadLearner,memory:loadMemory,knowledge:loadNotes,plugins:loadPlugins,logs:loadLogs})[p]?.()}
 const loadPageWithoutOpenScad=loadPage;
-loadPage=async function(p){if(p==='openscad')return window.loadOpenScad?.();if(p==='electronics')return window.loadSchematics?.();return loadPageWithoutOpenScad(p)};
+loadPage=async function(p){if(p==='openscad')return window.loadOpenScad?.();if(p==='electronics')return window.loadSchematics?.();if(p==='prototype')return window.loadPrototype?.();return loadPageWithoutOpenScad(p)};
 async function loadToolApprovals(){try{let x=await api('/api/tool-approvals');$('#toolApprovals').innerHTML=x.map(a=>`<article class="card approvalCard"><h3>Approval needed · ${esc(a.tool_name)}</h3><p>Sage selected this tool for your request. Review its inputs before it runs.</p><pre class="engineeringBody">${esc(JSON.stringify(a.arguments,null,2))}</pre><p class="meta">Requested ${esc(a.created_at)}</p><div class="row"><button class="primary" onclick="resolveToolApproval(${a.id},true)">Approve and run</button><button class="softBtn" onclick="resolveToolApproval(${a.id},false)">Decline</button></div></article>`).join('')}catch{}}
 async function resolveToolApproval(id,approved){let card=$('#toolApprovals').querySelector(`[onclick^="resolveToolApproval(${id},"]`)?.closest('.approvalCard');if(card){card.querySelectorAll('button').forEach(button=>{button.disabled=true});}try{let x=await api('/api/tool-approvals/'+id,{approved});card?.remove();if(x.answer)bubble('assistant',x.answer);loadToolApprovals();loadLogs()}catch(e){if(card)card.querySelectorAll('button').forEach(button=>{button.disabled=false});toast(e.message)}}
 async function loadPlugins(){let [x,tools]=await Promise.all([api('/api/plugins'),api('/api/tools')]);$('#aiTools').innerHTML=tools.map(t=>`<article class="card"><h3>${esc(t.name)} <span class="pill ${t.permission==='confirm'?'pending_approval':''}">${esc(t.permission==='confirm'?'approval required':t.permission)}</span></h3><p>${esc(t.description)}</p></article>`).join('')||'<div class="empty">No tools are available to the model.</div>';$('#pluginsList').innerHTML=x.map(p=>`<article class="card"><h3>${esc(p.name)} <span class="pill">${esc(p.permission||'blocked')}</span></h3><p>${esc(p.description)}</p><p class="meta">v${esc(p.version||'?')} · ${esc(p.entrypoint||'metadata error')}</p><form class="row pluginRun" data-name="${esc(p.name)}" style="margin-top:12px"><input name="arguments" placeholder='JSON inputs, e.g. {"expression":"3*(8+2)"}'><label><input type="checkbox" name="dry_run"> Dry run</label><button class="softBtn">Run</button></form></article>`).join('')||'<div class="empty">No plugins installed.</div>';loadPluginRequests();document.querySelectorAll('.pluginRun').forEach(f=>f.onsubmit=async e=>{e.preventDefault();try{let d=new FormData(f),args=JSON.parse(d.get('arguments')||'{}'),dry=d.has('dry_run');let first=await api('/api/plugins/run',{name:f.dataset.name,arguments:args,dry_run:dry});if(first.status==='pending_approval'&&confirm('This plugin requires approval. Run it now?')){let out=await api('/api/plugins/run',{name:f.dataset.name,arguments:args,approved:true});alert(JSON.stringify(out.result))}else if(first.result)alert(JSON.stringify(first.result));loadLogs()}catch(x){toast(x.message)}})}

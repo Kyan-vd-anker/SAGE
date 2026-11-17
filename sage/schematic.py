@@ -26,6 +26,8 @@ _SYMBOLS = {
     'pnp': ('BjtPnp', {'base', 'collector', 'emitter'}),
     'nmos': ('NFet', {'gate', 'drain', 'source'}),
     'pmos': ('PFet', {'gate', 'drain', 'source'}),
+    'ic': ('Ic', set()),
+    'motor': ('Motor', {'start', 'end'}),
 }
 _DIRECTIONS = {0, 90, 180, 270}
 _SYSTEM = (
@@ -36,9 +38,10 @@ _SYSTEM = (
     + ', '.join(sorted(_SYMBOLS))
     + '. Components use unique short IDs; place them on a clear grid with x/y in -20..20 and angle 0, 90, 180, or 270. '
     'Wire anchors: two-terminal parts use start/end; opamp uses in1, in2, out, vd, vs; npn/pnp use base, collector, emitter; '
-    'nmos/pmos use gate, drain, source; ground uses start. Use via for up to 8 orthogonal routing points, and junctions only '
-    'where wires intentionally connect. Use conventional symbols and preserve the user-specified connections and values. '
-    'Do not invent component ratings or claim the drawing is a verified PCB or electrical design.'
+    'nmos/pmos use gate, drain, source; ground uses start; motor uses start/end. For an ic component, include 2–24 pins '
+    'as {"number":"1","name":"GPIO21/SDA","side":"L","anchor":"sda"}; side must be L/R/T/B and anchors are pin names for wires. '
+    'Use via for up to 8 orthogonal routing points, and junctions only where wires intentionally connect. Use conventional symbols '
+    'and preserve the user-specified connections and values. Do not invent component ratings or claim the drawing is a verified PCB or electrical design.'
 )
 
 
@@ -95,6 +98,35 @@ def _validate_spec(spec):
         if len(label) > 100 or any(ord(char) < 32 for char in label):
             raise ValueError(f'{component_id} labels must be 100 characters or fewer and contain no control characters.')
         clean = {'id': component_id, 'symbol': symbol, 'label': label, 'x': point[0], 'y': point[1], 'angle': angle}
+        if symbol == 'ic':
+            pins = item.get('pins')
+            if not isinstance(pins, list) or not 2 <= len(pins) <= 24:
+                raise ValueError(f'{component_id} needs 2–24 named IC pins.')
+            clean_pins = []
+            seen_anchors = set()
+            for pin in pins:
+                if not isinstance(pin, dict):
+                    raise ValueError(f'{component_id} pins must be objects.')
+                number = str(pin.get('number') or '').strip()
+                name = str(pin.get('name') or '').strip()
+                side = str(pin.get('side') or '').strip().upper()
+                anchor = str(pin.get('anchor') or '').strip()
+                if (not number or len(number) > 8 or not name or len(name) > 32
+                        or side not in ('L', 'R', 'T', 'B')
+                        or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]{0,15}', anchor)
+                        or anchor in seen_anchors):
+                    raise ValueError(f'{component_id} pins need unique anchors, short numbers/names, and an L/R/T/B side.')
+                if any(ord(char) < 32 for char in number + name):
+                    raise ValueError(f'{component_id} pin names cannot contain control characters.')
+                seen_anchors.add(anchor)
+                clean_pins.append({'number': number, 'name': name, 'side': side, 'anchor': anchor})
+            size = item.get('size', [4, 3])
+            if (not isinstance(size, (list, tuple)) or len(size) != 2
+                    or any(isinstance(value, bool) or not isinstance(value, (int, float))
+                           or not math.isfinite(value) or not 2 <= value <= 12 for value in size)):
+                raise ValueError(f'{component_id} IC size must be two dimensions from 2 to 12.')
+            clean['pins'] = clean_pins
+            clean['size'] = [float(size[0]), float(size[1])]
         clean_components.append(clean)
         by_id[component_id] = clean
 
@@ -112,7 +144,11 @@ def _validate_spec(spec):
                 raise ValueError('Each wire needs from/to component anchors.')
             component_id = str(endpoint.get('component') or '')
             anchor = str(endpoint.get('anchor') or '')
-            if component_id not in by_id or anchor not in _SYMBOLS[by_id[component_id]['symbol']][1]:
+            component = by_id.get(component_id)
+            valid_anchors = ({pin['anchor'] for pin in component.get('pins', [])}
+                             if component and component['symbol'] == 'ic'
+                             else _SYMBOLS[component['symbol']][1] if component else set())
+            if anchor not in valid_anchors:
                 raise ValueError(f'Wire {key} must name a valid component anchor.')
             endpoints.append({'component': component_id, 'anchor': anchor})
         via = wire.get('via', [])
@@ -141,8 +177,13 @@ def _render_svg(spec):
     diagram = schemdraw.Drawing(show=False)
     placed = {}
     for item in spec['components']:
-        class_name = _SYMBOLS[item['symbol']][0]
-        element = getattr(elements, class_name)().at((item['x'], item['y'])).theta(item['angle'])
+        if item['symbol'] == 'ic':
+            pins = [elements.IcPin(pin=pin['number'], name=pin['name'], side=pin['side'], anchorname=pin['anchor'])
+                    for pin in item['pins']]
+            element = elements.Ic(size=tuple(item['size']), pins=pins).at((item['x'], item['y'])).theta(item['angle'])
+        else:
+            class_name = _SYMBOLS[item['symbol']][0]
+            element = getattr(elements, class_name)().at((item['x'], item['y'])).theta(item['angle'])
         label = item['id'] + (f': {item["label"]}' if item['label'] else '')
         element.label(label)
         placed[item['id']] = diagram.add(element)

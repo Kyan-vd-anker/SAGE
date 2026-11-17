@@ -145,6 +145,9 @@ def init():
         CREATE TABLE IF NOT EXISTS schematic_designs(id INTEGER PRIMARY KEY, project_id INTEGER, title TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS schematic_versions(id INTEGER PRIMARY KEY, design_id INTEGER NOT NULL, version INTEGER NOT NULL, prompt TEXT NOT NULL DEFAULT '', spec_json TEXT NOT NULL, svg TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(design_id,version), FOREIGN KEY(design_id) REFERENCES schematic_designs(id) ON DELETE CASCADE);
         CREATE INDEX IF NOT EXISTS schematic_versions_design ON schematic_versions(design_id,version DESC);
+        CREATE TABLE IF NOT EXISTS prototype_designs(id INTEGER PRIMARY KEY, project_id INTEGER, title TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(project_id) REFERENCES projects(id));
+        CREATE TABLE IF NOT EXISTS prototype_versions(id INTEGER PRIMARY KEY, design_id INTEGER NOT NULL, version INTEGER NOT NULL, prompt TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', plan_json TEXT NOT NULL, firmware TEXT NOT NULL, schematic_json TEXT NOT NULL, schematic_svg TEXT NOT NULL DEFAULT '', schematic_error TEXT NOT NULL DEFAULT '', openscad_source TEXT NOT NULL, mesh_name TEXT NOT NULL DEFAULT '', render_error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, UNIQUE(design_id,version), FOREIGN KEY(design_id) REFERENCES prototype_designs(id) ON DELETE CASCADE);
+        CREATE INDEX IF NOT EXISTS prototype_versions_design ON prototype_versions(design_id,version DESC);
         ''')
         try:
             c.execute('CREATE VIRTUAL TABLE IF NOT EXISTS library_fts USING fts5(heading, text, path UNINDEXED, chunk_id UNINDEXED)')

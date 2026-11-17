@@ -6,6 +6,12 @@ from sage import llm
 
 
 class LlmTests(unittest.TestCase):
+    def test_chat_message_refuses_a_prompt_that_exceeds_its_context_window(self):
+        with patch.object(llm._config,'NUM_CTX',128), patch('sage.llm.urllib.request.urlopen') as urlopen:
+            with self.assertRaisesRegex(llm.OllamaError,'context window'):
+                llm.chat_message([{'role':'user','content':'x'*360}],max_tokens=10,model='test-model')
+        urlopen.assert_not_called()
+
     def test_chat_message_uses_longer_default_timeout(self):
         response = MagicMock()
         response.__enter__.return_value.read.return_value = json.dumps(

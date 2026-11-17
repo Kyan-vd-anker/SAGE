@@ -13,6 +13,30 @@ from .config import OLLAMA_URL, MODEL, CODING_MODEL, REASONING_MODEL, ROUTER_LON
 from . import config as _config
 
 class OllamaError(RuntimeError): pass
+
+
+def estimate_text_tokens(text):
+    """Conservative prompt estimate used when the Ollama tokenizer is not available locally."""
+    return (len(str(text or ''))+2)//3
+
+
+def _estimate_prompt_tokens(messages,tools=None,model=None):
+    chars=sum(len(str(item.get('content') or '')) for item in messages)
+    if tools:chars+=len(json.dumps(tools,ensure_ascii=False,separators=(',',':')))
+    if model and _baked_current(model):chars+=len(_static_prompt())
+    return (chars+2)//3+8*len(messages)
+
+
+def _check_context_window(messages,tools,max_tokens,num_ctx,model=None):
+    prompt_tokens=_estimate_prompt_tokens(messages,tools,model)
+    output_tokens=max_tokens if max_tokens is not None else 512
+    if prompt_tokens+output_tokens>num_ctx:
+        raise OllamaError(
+            f'The prompt is estimated at {prompt_tokens:,} tokens plus up to {output_tokens:,} output tokens, '
+            f'exceeding the {num_ctx:,}-token context window. Shorten the request or retrieved context.'
+        )
+
+
 _priority = threading.Condition()
 _chat_busy = False
 _foreground_waiters = 0
@@ -265,7 +289,9 @@ def _background_request(messages, max_tokens, timeout, model):
         _active_background_conn=conn
     deadline=time.monotonic()+timeout
     try:
-        data={"model": model, "messages": _prepare(model, messages), "stream": True, "keep_alive": _config.OLLAMA_KEEP_ALIVE}
+        prepared_messages=_prepare(model,messages)
+        _check_context_window(prepared_messages,None,max_tokens,_config.NUM_CTX,model)
+        data={"model": model, "messages": prepared_messages, "stream": True, "keep_alive": _config.OLLAMA_KEEP_ALIVE}
         if max_tokens is not None: data['options']={"num_predict": max_tokens}
         data.setdefault('options',{})['num_ctx']=_config.NUM_CTX   # one window for every caller, so Ollama never reloads the model for a different size
         conn.request('POST',url.path,body=json.dumps(data).encode(),headers={"Content-Type":"application/json"})
@@ -333,23 +359,27 @@ def chat_stream(messages, tools=None, max_tokens=None, on_token=None, cancel=Non
     """Foreground chat that streams: on_token(text) is called for every piece of text as it is generated.
     Returns the finished assistant message (content and any tool_calls). `timeout` applies to silence
     between pieces, not to the whole reply."""
-    _acquire(False)
     model = model or MODEL
+    _acquire(False)
     conn = None
     parts = []
     calls = []
     prompt_tokens = None
     try:
+        context_window=int(num_ctx if num_ctx is not None else _config.NUM_CTX)
+        prepared_messages=_prepare(model,messages)
+        stable_tools=_stable_tools(tools) if tools else None
+        _check_context_window(prepared_messages,stable_tools,max_tokens,context_window,model)
         url = urlparse(OLLAMA_URL.rstrip('/') + '/api/chat')
         factory = http.client.HTTPSConnection if url.scheme == 'https' else http.client.HTTPConnection
         conn = factory(url.hostname, url.port, timeout=timeout)
         if cancel is not None:
             cancel.conn = conn
             if cancel.cancelled: raise StreamCancelled('')
-        data = {"model": model, "messages": _prepare(model, messages), "stream": True, "keep_alive": _config.OLLAMA_KEEP_ALIVE}
-        if tools: data['tools'] = _stable_tools(tools)
+        data = {"model": model, "messages": prepared_messages, "stream": True, "keep_alive": _config.OLLAMA_KEEP_ALIVE}
+        if stable_tools: data['tools'] = stable_tools
         if max_tokens is not None: data['options'] = {"num_predict": max_tokens}
-        data.setdefault('options', {})['num_ctx'] = int(num_ctx or _config.NUM_CTX)
+        data.setdefault('options', {})['num_ctx'] = context_window
         conn.request('POST', url.path, body=json.dumps(data).encode(), headers={"Content-Type": "application/json"})
         if cancel is not None and cancel.cancelled: raise StreamCancelled('')
         response = conn.getresponse()
@@ -396,10 +426,13 @@ def chat_message(messages, tools=None, timeout=600, max_tokens=None, background=
     # background requests are closed by interrupt_background() on new input.
     _acquire(background)
     try:
+        prepared_messages=_prepare(model,messages)
+        stable_tools=_stable_tools(tools) if tools else None
+        _check_context_window(prepared_messages,stable_tools,max_tokens,_config.NUM_CTX,model)
         if background and not tools:
             return _background_request(messages, max_tokens, timeout, model)
-        data = {"model": model, "messages": _prepare(model, messages), "stream": False, "keep_alive": _config.OLLAMA_KEEP_ALIVE}
-        if tools: data['tools'] = _stable_tools(tools)
+        data = {"model": model, "messages": prepared_messages, "stream": False, "keep_alive": _config.OLLAMA_KEEP_ALIVE}
+        if stable_tools: data['tools'] = stable_tools
         if max_tokens is not None: data['options'] = {"num_predict": max_tokens}
         data.setdefault('options', {})['num_ctx'] = _config.NUM_CTX
         payload = json.dumps(data).encode()
@@ -436,7 +469,10 @@ def chat_message(messages, tools=None, timeout=600, max_tokens=None, background=
                     instruction+='\nThe user explicitly asked for one of these tools. You MUST choose one of them and fill its arguments from the user message (use defaults when unspecified). Never answer from your own knowledge and never invent a result.'
                 fallback_messages=[{'role':'system','content':instruction}]+messages
                 output_schema={'type':'object','properties':{'tool':{'type':'string','enum':([] if require_tool else ['none'])+names},'arguments':{'type':'object'},'response':{'type':'string'}},'required':['tool','arguments','response'],'additionalProperties':False}
-                fallback={'model':model,'messages':_prepare(model,fallback_messages),'stream':False,'keep_alive':_config.OLLAMA_KEEP_ALIVE,'format':output_schema,'options':{'num_predict':min(max_tokens or 256,512),'num_ctx':_config.NUM_CTX}}
+                prepared_fallback=_prepare(model,fallback_messages)
+                fallback_tokens=min(max_tokens or 256,512)
+                _check_context_window(prepared_fallback,output_schema,fallback_tokens,_config.NUM_CTX,model)
+                fallback={'model':model,'messages':prepared_fallback,'stream':False,'keep_alive':_config.OLLAMA_KEEP_ALIVE,'format':output_schema,'options':{'num_predict':fallback_tokens,'num_ctx':_config.NUM_CTX}}
                 retry=urllib.request.Request(OLLAMA_URL.rstrip('/')+'/api/chat',data=json.dumps(fallback).encode(),headers={'Content-Type':'application/json'},method='POST')
                 try:
                     with urllib.request.urlopen(retry,timeout=timeout) as response: fallback_data=json.loads(response.read()); _record_speed(model,fallback_data); reply=fallback_data.get('message',{})

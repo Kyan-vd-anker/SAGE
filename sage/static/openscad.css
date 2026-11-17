@@ -2,4 +2,11 @@
 .technicalDrawingCard img{display:block;width:100%;max-height:70vh;object-fit:contain;background:#fff;border:1px solid var(--border);border-radius:8px;margin-top:12px}
 .schematicPreviewCard img{display:block;width:100%;max-height:70vh;object-fit:contain;background:#fff;border:1px solid var(--border);border-radius:8px;margin-top:12px}
 .schematicPreviewCard details{margin-top:12px}
+
+#openscadImages{display:block;width:100%;min-height:60px;padding:8px;border:1px dashed color-mix(in srgb,var(--listening) 38%,var(--border));border-radius:12px;background:linear-gradient(110deg,color-mix(in srgb,var(--listening) 6%,var(--surface)),var(--input-bg));color:var(--muted);font-size:12px;transition:border-color .16s ease,background-color .16s ease}
+#openscadImages:hover{border-color:color-mix(in srgb,var(--listening) 72%,var(--border))}
+#openscadImages:focus-visible{outline:2px solid var(--listening);outline-offset:3px}
+#openscadImages::file-selector-button{min-height:38px;margin-right:12px;padding:0 15px;border:0;border-radius:8px;background:var(--listening);color:var(--button-text);font:600 12px system-ui,sans-serif;cursor:pointer;transition:filter .15s ease,transform .15s ease}
+#openscadImages:hover::file-selector-button{filter:brightness(1.08)}
+#openscadImages:active::file-selector-button{transform:translateY(1px)}
 @media(max-width:900px){.openscadLayout{grid-template-columns:1fr}.openscadDesigns{position:static;max-height:360px}.openscadPreviewCard canvas{height:45vh}}

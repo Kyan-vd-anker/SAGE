@@ -1,0 +1,26 @@
+.prototypeLayout{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:14px;align-items:start}
+.prototypeMain{display:grid;gap:12px;min-width:0}
+.prototypeMain .row{align-items:center}
+.prototypeMain .row>*{min-width:0}
+.prototypeMain .row input{flex:1}
+.prototypeHeading{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.prototypeHeading h3{margin:0 auto 0 0}
+.prototypeDesigns{position:sticky;top:12px;max-height:calc(100vh - 100px);overflow:auto}
+.prototypeDesigns h3{margin-bottom:10px}
+.prototypeCode{display:block;width:100%;min-height:220px;margin:10px 0;resize:vertical;font:12px/1.5 var(--mono);white-space:pre;tab-size:4}
+#prototypeFirmware{min-height:340px}
+#prototypePlan,#prototypeSchematicSpec{min-height:280px}
+.prototypeTableWrap{overflow:auto;max-width:100%;margin:8px 0}
+.prototypeTable{border-collapse:collapse;width:100%;font-size:12px}
+.prototypeTable th,.prototypeTable td{padding:8px 10px;border:1px solid var(--border);text-align:left;vertical-align:top}
+.prototypeTable th{background:var(--surface-raised);white-space:nowrap}
+.prototypeTable td{overflow-wrap:anywhere}
+.prototypeMain details{margin-top:10px}
+.prototypeMain details h4{margin:14px 0 6px}
+.prototypeMain details ul,.prototypeMain details ol{padding-left:22px}
+.prototypeMain details li{margin:6px 0}
+.prototypeCadCard canvas{display:block;width:100%;height:min(48vh,460px);min-height:240px;background:#080d13;border:1px solid var(--border);border-radius:10px;touch-action:none}
+.prototypeCadCard canvas:focus-visible{outline:2px solid var(--listening)}
+.prototypeCadCard details{margin-top:12px}
+.prototypeMain .openscadStatusError{color:var(--error)!important}
+@media(max-width:900px){.prototypeLayout{grid-template-columns:1fr}.prototypeDesigns{position:static;max-height:360px}.prototypeCadCard canvas{height:42vh}}
