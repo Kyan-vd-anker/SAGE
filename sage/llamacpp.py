@@ -11,17 +11,42 @@ class LlamaCppError(RuntimeError):
     pass
 
 
-_cache_restore_attempted = False
+_cache_restore_attempted = set()
 
 
-def endpoint(path):
-    return config.LLAMA_CPP_URL + path
+def route_for(model=None):
+    if config.LLAMA_CPP_FAST_URL and model == config.FAST_MODEL:
+        return {
+            "url": config.LLAMA_CPP_FAST_URL,
+            "model": config.LLAMA_CPP_FAST_MODEL,
+            "slot": config.LLAMA_CPP_FAST_SLOT,
+            "cache_dir": config.LLAMA_CPP_FAST_CACHE_DIR,
+            "cache_file": config.LLAMA_CPP_FAST_CACHE_FILE,
+            "api_key": config.LLAMA_CPP_FAST_API_KEY,
+        }
+    return {
+        "url": config.LLAMA_CPP_URL,
+        "model": config.LLAMA_CPP_MODEL,
+        "slot": config.LLAMA_CPP_SLOT,
+        "cache_dir": config.LLAMA_CPP_CACHE_DIR,
+        "cache_file": config.LLAMA_CPP_CACHE_FILE,
+        "api_key": config.LLAMA_CPP_API_KEY,
+    }
 
 
-def headers():
+def model_name(model=None):
+    return route_for(model)["model"]
+
+
+def endpoint(path, model=None):
+    return route_for(model)["url"] + path
+
+
+def headers(model=None):
     result = {"Content-Type": "application/json"}
-    if config.LLAMA_CPP_API_KEY:
-        result["Authorization"] = "Bearer " + config.LLAMA_CPP_API_KEY
+    api_key = route_for(model)["api_key"]
+    if api_key:
+        result["Authorization"] = "Bearer " + api_key
     return result
 
 
@@ -61,11 +86,12 @@ def _messages(messages):
 
 def request_body(data):
     options = data.get("options") or {}
+    route = route_for(data.get("model"))
     body = {
-        "model": config.LLAMA_CPP_MODEL,
+        "model": route["model"],
         "messages": _messages(data.get("messages") or []),
         "stream": bool(data.get("stream")),
-        "id_slot": config.LLAMA_CPP_SLOT,
+        "id_slot": route["slot"],
         "extra_params": {"cache_prompt": True},
         "chat_template_kwargs": {"enable_thinking": bool(data.get("think", False))},
     }
@@ -91,10 +117,11 @@ def request_body(data):
     return body
 
 
-def _cache_request(action, timeout=30):
-    path = f"/slots/{config.LLAMA_CPP_SLOT}?action={action}"
-    data = json.dumps({"filename": config.LLAMA_CPP_CACHE_FILE}).encode()
-    request = urllib.request.Request(endpoint(path), data=data, headers=headers(), method="POST")
+def _cache_request(action, model=None, timeout=30):
+    route = route_for(model)
+    path = f"/slots/{route['slot']}?action={action}"
+    data = json.dumps({"filename": route["cache_file"]}).encode()
+    request = urllib.request.Request(endpoint(path, model), data=data, headers=headers(model), method="POST")
     with urllib.request.urlopen(request, timeout=timeout) as response:
         result = json.loads(response.read())
     if result.get("error"):
@@ -102,25 +129,26 @@ def _cache_request(action, timeout=30):
     return result
 
 
-def restore_cache():
-    global _cache_restore_attempted
-    if _cache_restore_attempted:
+def restore_cache(model=None):
+    route = route_for(model)
+    key = (route["url"], route["slot"], str(route["cache_dir"]), route["cache_file"])
+    if key in _cache_restore_attempted:
         return
-    cache_file = config.LLAMA_CPP_CACHE_DIR / config.LLAMA_CPP_CACHE_FILE
-    _cache_restore_attempted = True
+    _cache_restore_attempted.add(key)
+    cache_file = route["cache_dir"] / route["cache_file"]
     if not cache_file.is_file():
         return
     try:
-        _cache_request("restore")
+        _cache_request("restore", model)
     except (urllib.error.HTTPError, LlamaCppError, ValueError) as exc:
         detail=exc.read().decode("utf-8","replace") if isinstance(exc,urllib.error.HTTPError) else str(exc)
         code=f" ({exc.code})" if isinstance(exc,urllib.error.HTTPError) else ""
         print(f"Sage: could not restore llama.cpp prompt cache{code}: {detail[:300]}", flush=True)
 
 
-def save_cache():
+def save_cache(model=None):
     try:
-        _cache_request("save", timeout=120)
+        _cache_request("save", model, timeout=120)
     except (urllib.error.HTTPError, urllib.error.URLError, LlamaCppError, OSError, ValueError) as exc:
         print(f"Sage: llama.cpp reply succeeded, but saving its prompt cache failed: {exc}", flush=True)
 

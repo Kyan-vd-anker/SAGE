@@ -71,7 +71,61 @@ Environment=SAGE_SEMANTIC_MEMORY=0
 Environment=SAGE_OLLAMA_KEEP_ALIVE=0
 ```
 
-Run `systemctl --user daemon-reload && systemctl --user restart sage.service` after editing. Set `SAGE_LLAMA_CPP_SERVER_BIN` if `llama-server` is not on `PATH`. This mode uses one loaded GGUF model for all Sage chat lanes; Ollama remains available for vision and embeddings. On a 16 GB Ryzen 5 5600G system inference is CPU-bound, and a 64K context can consume substantial RAM and be slow. If startup fails or swaps heavily, lower `SAGE_NUM_CTX` consistently in both services (for example to `16384` or `32768`). The disk snapshot only speeds up reuse of an unchanged prompt prefix; restoring or writing a large snapshot also costs I/O and is not guaranteed to beat recomputation.
+Run `systemctl --user daemon-reload && systemctl --user restart sage.service` after editing. Set `SAGE_LLAMA_CPP_SERVER_BIN` if `llama-server` is not on `PATH`. By default this uses one loaded GGUF model for every Sage chat lane; the optional setup below routes the fast lane to a second server. Ollama remains available for vision and embeddings. On a 16 GB Ryzen 5 5600G system inference is CPU-bound, and multiple loaded models or a 64K context can consume substantial RAM and be slow. Start with a 16K context for multi-model routing and monitor memory; if it swaps heavily, use the single-model setup instead. The disk snapshot only speeds up reuse of an unchanged prompt prefix; restoring or writing a large snapshot also costs I/O and is not guaranteed to beat recomputation.
+
+#### Route fast, coding and reasoning to the three model lanes
+
+The provided Ollama blobs can be used as GGUF files if they have the `GGUF` header and llama.cpp supports their architecture. The 4B fast model runs on its own server; coding and reasoning share the same 9B weights on the main server. This requires two loaded models, not three, but may still be tight on 16 GB RAM.
+
+1. Copy the Ollama 9B blob to a readable file after checking its header and available disk space. Replace the example hash if your Ollama manifest points to a different blob:
+   ```
+   blob=/usr/share/ollama/.ollama/models/blobs/sha256-02d45dc1cf451ba2475ac33b301c2dd8f985abe4c182ce04a1f2f5bf0260278d
+   sudo head -c 4 "$blob" | od -An -tc
+   df -h ~/models
+   ```
+   Continue only if the header prints `G G U F`; then copy it and make only the copy readable by your Sage user:
+   ```
+   sudo cp --reflink=auto "$blob" "$HOME/models/sage-9b-local.gguf"
+   sudo chown "$(id -un):$(id -gn)" "$HOME/models/sage-9b-local.gguf"
+   chmod 600 "$HOME/models/sage-9b-local.gguf"
+   ```
+   Do not change permissions on Ollama's original blob.
+2. Edit `~/.config/sage/llama.env`: point `SAGE_LLAMA_CPP_MODEL_PATH` at `/home/<user>/models/sage-9b-local.gguf`, use port `8080`, set `SAGE_LLAMA_CPP_CACHE_DIR=/home/<user>/SAGE/data/kv-cache-deep`, and set `SAGE_NUM_CTX=16384`.
+3. Configure the fast server:
+   ```
+   cp ~/SAGE/llama-fast.env.example ~/.config/sage/llama-fast.env
+   nano ~/.config/sage/llama-fast.env
+   ```
+   Replace the paths, keep its model path at `sage-fast-local.gguf`, and leave its port at `8081`. Install and enable its service:
+   ```
+   cp ~/SAGE/scripts/sage-llama-fast.service ~/.config/systemd/user/
+   systemctl --user daemon-reload
+   systemctl --user enable --now sage-llama-fast.service
+   ```
+4. In `systemctl --user edit sage.service`, require both server units and set:
+   ```
+   [Unit]
+   Requires=sage-llama-server.service
+   Requires=sage-llama-fast.service
+   After=sage-llama-server.service
+   After=sage-llama-fast.service
+
+   [Service]
+   Environment=SAGE_LLM_BACKEND=llama_cpp
+   Environment=SAGE_LLAMA_CPP_URL=http://127.0.0.1:8080
+   Environment=SAGE_LLAMA_CPP_MODEL=sage-deep
+   Environment=SAGE_LLAMA_CPP_CACHE_DIR=/home/<user>/SAGE/data/kv-cache-deep
+   Environment=SAGE_LLAMA_CPP_FAST_URL=http://127.0.0.1:8081
+   Environment=SAGE_LLAMA_CPP_FAST_MODEL=sage-fast
+   Environment=SAGE_LLAMA_CPP_FAST_CACHE_DIR=/home/<user>/SAGE/data/kv-cache-fast
+   Environment=SAGE_LLAMA_CPP_FAST_CACHE_FILE=sage-fast-session.bin
+   Environment=SAGE_NUM_CTX=16384
+   Environment=SAGE_SEMANTIC_MEMORY=0
+   Environment=SAGE_OLLAMA_KEEP_ALIVE=0
+   ```
+   Replace `<user>` with your Linux username and keep each server's cache directory in sync with its environment file. Run `systemctl --user daemon-reload && systemctl --user restart sage.service`.
+
+The status page should show `sage-fast` for Fast and `sage-deep` for Coding and Reasoning. If either server fails, inspect its journal with `journalctl --user -u sage-llama-fast.service -n 80 --no-pager` or `journalctl --user -u sage-llama-server.service -n 80 --no-pager`.
 
 ### Speaking while writing, first-token time, and replies by room
 

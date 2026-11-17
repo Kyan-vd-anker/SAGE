@@ -4,6 +4,10 @@ All notable changes to SAGE are documented here. Version numbers follow `MAJOR.M
 
 ## Unreleased
 
+## 4.1.0 - 2026-11-17
+
+- Add multi-lane llama.cpp routing for fast, coding, and reasoning models
+
 - Memory upgrade. Memories now have tiers (core, working, episodic, semantic, procedural); core and pinned memories form an always-on profile block that sits at the start of the cached prompt prefix. A new knowledge graph (`entities.py`) links people, projects and devices to memories by alias with a single regex, so no model call is needed per turn. A changed fact now supersedes the older note instead of overwriting it (history is kept and `search_memory` can return it), and a shorter near-duplicate can no longer replace a richer note. After a reply, an idle-time capture job (`capture.py`) extracts facts, entities, relations and open loops from what the user said; high-confidence facts are saved, core-tier ones wait for approval. Each project gets a refreshed "state of play" (`userprofile.py`). The voice path skips the embedding call and the older-message scan, keeps replies short, and uses a compact profile. `search_memory` is now deep recall (memories, past conversation, decisions, entity cards; filter by tier, entity or age). New chat commands: "show core profile", "show memory tiers", "list entities", "state of play <project>". `SAGE_MEMORY_CAPTURE=0` and `SAGE_PROJECT_STATE=0` switch the two background jobs off.
 - One context size for every request: `SAGE_NUM_CTX` (default 16384) is now sent with every chat and background call, and `SAGE_VSCODE_NUM_CTX` follows it. VS Code previously ran with 8192 and refused larger requests with `context_length_exceeded`. Rebuild the models with `python scripts/build-models.py` so the Modelfiles agree.
 - Fixed: `draft_email_reply` raised a NameError because `agent.py` never imported `outlook`.
@@ -39,4 +43,5 @@ All notable changes to SAGE are documented here. Version numbers follow `MAJOR.M
 ## 2.1.1
 
 - Previous development version; formal release notes were not maintained yet.
+
 

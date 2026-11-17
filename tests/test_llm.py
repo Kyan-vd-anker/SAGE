@@ -73,7 +73,7 @@ class LlmTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, \
                 patch.object(llm._config, 'LLM_BACKEND', 'llama_cpp'), \
                 patch.object(llm._config, 'LLAMA_CPP_CACHE_DIR', Path(tmp)), \
-                patch.object(llm.llamacpp, '_cache_restore_attempted', False), \
+                patch.object(llm.llamacpp, '_cache_restore_attempted', set()), \
                 patch('sage.llm.urllib.request.urlopen', side_effect=[chat_response, save_response]) as urlopen:
             reply = llm.chat_message([{'role': 'user', 'content': 'question'}], model=llm.MODEL, on_request=captured.append)
 
@@ -85,6 +85,82 @@ class LlmTests(unittest.TestCase):
         self.assertIn('/v1/chat/completions', calls[0].args[0].full_url)
         self.assertIn('/slots/0?action=save', calls[1].args[0].full_url)
         self.assertEqual(captured, [body])
+
+    def test_llamacpp_stream_uses_fast_endpoint_for_fast_lane(self):
+        response = MagicMock()
+        response.status = 200
+        response.__iter__.return_value = [
+            b'data: {"choices":[{"delta":{"content":"answer"}}]}\n',
+            b'data: [DONE]\n',
+        ]
+        conn = MagicMock()
+        conn.getresponse.return_value = response
+        with patch.object(llm._config, 'LLM_BACKEND', 'llama_cpp'), \
+                patch.object(llm._config, 'FAST_MODEL', 'fast-lane'), \
+                patch.object(llm._config, 'LLAMA_CPP_FAST_URL', 'http://127.0.0.1:8081'), \
+                patch.object(llm.llamacpp, '_cache_restore_attempted', set()), \
+        patch('sage.llm.http.client.HTTPConnection', return_value=conn) as factory:
+            result = llm.chat_stream([{'role': 'user', 'content': 'hi'}], model='fast-lane', cache_session=False)
+            self.assertEqual(llm.display_model('fast-lane'), llm._config.LLAMA_CPP_FAST_MODEL)
+
+        self.assertEqual(result['content'], 'answer')
+        factory.assert_called_once_with('127.0.0.1', 8081, timeout=600)
+        self.assertEqual(conn.request.call_args.args[0], 'POST')
+        self.assertEqual(conn.request.call_args.args[1], '/v1/chat/completions')
+        self.assertEqual(conn.request.call_args.kwargs['headers']['Content-Type'], 'application/json')
+        self.assertEqual(conn.getresponse.call_count, 1)
+
+    def test_llamacpp_nonstream_fast_lane_saves_to_its_own_server(self):
+        chat_response = MagicMock()
+        chat_response.__enter__.return_value.read.return_value = json.dumps({
+            'choices': [{'message': {'content': 'answer'}}],
+            'usage': {'prompt_tokens': 40, 'completion_tokens': 2},
+            'timings': {'cache_n': 20, 'prompt_ms': 10, 'predicted_ms': 5},
+        }).encode()
+        save_response = MagicMock()
+        save_response.__enter__.return_value.read.return_value = b'{"n_saved": 40}'
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.object(llm._config, 'LLM_BACKEND', 'llama_cpp'), \
+                patch.object(llm._config, 'FAST_MODEL', 'fast-lane'), \
+                patch.object(llm._config, 'LLAMA_CPP_FAST_URL', 'http://127.0.0.1:8081'), \
+                patch.object(llm._config, 'LLAMA_CPP_FAST_CACHE_DIR', Path(tmp)), \
+                patch.object(llm.llamacpp, '_cache_restore_attempted', set()), \
+                patch('sage.llm.urllib.request.urlopen', side_effect=[chat_response, save_response]) as urlopen:
+            result = llm.chat_message([{'role': 'user', 'content': 'hi'}], model='fast-lane')
+
+        calls = urlopen.call_args_list
+        self.assertEqual(result['content'], 'answer')
+        self.assertEqual(calls[0].args[0].full_url, 'http://127.0.0.1:8081/v1/chat/completions')
+        self.assertEqual(calls[1].args[0].full_url, 'http://127.0.0.1:8081/slots/0?action=save')
+
+    def test_llamacpp_status_reports_separate_lane_servers(self):
+        def fake_urlopen(request, timeout):
+            response = MagicMock()
+            response.__enter__.return_value.read.return_value = (
+                b'{"models":[]}' if request.full_url.endswith('/api/tags') else b'{"status":"ok"}'
+            )
+            return response
+
+        with patch.object(llm._config, 'LLM_BACKEND', 'llama_cpp'), \
+                patch.object(llm, 'MODEL', 'fast-lane'), \
+                patch.object(llm, 'CODING_MODEL', 'coding-lane'), \
+                patch.object(llm, 'REASONING_MODEL', 'reasoning-lane'), \
+                patch.object(llm._config, 'FAST_MODEL', 'fast-lane'), \
+                patch.object(llm._config, 'CODING_MODEL', 'coding-lane'), \
+                patch.object(llm._config, 'REASONING_MODEL', 'reasoning-lane'), \
+                patch.object(llm._config, 'LLAMA_CPP_URL', 'http://127.0.0.1:8080'), \
+                patch.object(llm._config, 'LLAMA_CPP_FAST_URL', 'http://127.0.0.1:8081'), \
+                patch.object(llm._config, 'LLAMA_CPP_FAST_MODEL', 'sage-fast'), \
+                patch.object(llm._config, 'LLAMA_CPP_MODEL', 'sage-deep'), \
+                patch('sage.llm.urllib.request.urlopen', side_effect=fake_urlopen) as urlopen:
+            state = llm.status()
+
+        self.assertTrue(state['online'])
+        self.assertEqual([(lane['role'], lane['model']) for lane in state['lanes']], [
+            ('Fast', 'sage-fast'), ('Coding', 'sage-deep'), ('Reasoning', 'sage-deep'),
+        ])
+        health_urls = {call.args[0].full_url for call in urlopen.call_args_list if call.args[0].full_url.endswith('/health')}
+        self.assertEqual(health_urls, {'http://127.0.0.1:8080/health', 'http://127.0.0.1:8081/health'})
 
     def test_llamacpp_stream_parses_sse_and_can_skip_disk_persistence(self):
         response = MagicMock()

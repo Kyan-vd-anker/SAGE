@@ -17,7 +17,8 @@ class LlamaCppAdapterTests(unittest.TestCase):
             {"role": "tool", "tool_name": "search_memory", "content": '{"matches": []}'},
         ]
         tool = {"type": "function", "function": {"name": "search_memory", "parameters": {"type": "object"}}}
-        with patch.object(config, "LLAMA_CPP_MODEL", "sage-test"), patch.object(config, "LLAMA_CPP_SLOT", 0):
+        with patch.object(config, "LLAMA_CPP_MODEL", "sage-test"), patch.object(config, "LLAMA_CPP_SLOT", 0), \
+                patch.object(config, "LLAMA_CPP_FAST_URL", ""):
             body = llamacpp.request_body({
                 "model": config.CODING_MODEL, "messages": messages, "stream": True,
                 "tools": [tool], "think": False, "options": {"num_predict": 321, "num_ctx": 65536},
@@ -32,6 +33,25 @@ class LlamaCppAdapterTests(unittest.TestCase):
         self.assertEqual(body["messages"][2]["tool_call_id"], body["messages"][1]["tool_calls"][0]["id"])
         self.assertEqual(body["temperature"], 0.2)
         self.assertNotIn("num_ctx", body)
+
+    def test_fast_lane_routes_to_its_own_model_server(self):
+        with patch.object(config, "FAST_MODEL", "fast-lane"), \
+                patch.object(config, "CODING_MODEL", "coding-lane"), \
+                patch.object(config, "REASONING_MODEL", "reasoning-lane"), \
+                patch.object(config, "LLAMA_CPP_FAST_URL", "http://127.0.0.1:8081"), \
+                patch.object(config, "LLAMA_CPP_FAST_MODEL", "sage-fast"), \
+                patch.object(config, "LLAMA_CPP_FAST_SLOT", 1), \
+                patch.object(config, "LLAMA_CPP_MODEL", "sage-deep"):
+            fast_route = llamacpp.route_for("fast-lane")
+            coding_route = llamacpp.route_for("coding-lane")
+            reasoning_route = llamacpp.route_for("reasoning-lane")
+            body = llamacpp.request_body({"model": "fast-lane", "messages": [{"role": "user", "content": "hi"}]})
+
+        self.assertEqual(fast_route["url"], "http://127.0.0.1:8081")
+        self.assertEqual(body["model"], "sage-fast")
+        self.assertEqual(body["id_slot"], 1)
+        self.assertEqual(coding_route["model"], "sage-deep")
+        self.assertEqual(reasoning_route["model"], "sage-deep")
 
     def test_response_converts_openai_completion_and_timing_data(self):
         response = {
@@ -58,7 +78,7 @@ class LlamaCppAdapterTests(unittest.TestCase):
     def test_restore_only_contacts_server_when_snapshot_exists(self):
         with tempfile.TemporaryDirectory() as tmp, \
                 patch.object(config, "LLAMA_CPP_CACHE_DIR", Path(tmp)), \
-                patch.object(llamacpp, "_cache_restore_attempted", False), \
+                patch.object(llamacpp, "_cache_restore_attempted", set()), \
                 patch("sage.llamacpp.urllib.request.urlopen") as urlopen:
             llamacpp.restore_cache()
             urlopen.assert_not_called()
@@ -67,12 +87,32 @@ class LlamaCppAdapterTests(unittest.TestCase):
             response = MagicMock()
             response.__enter__.return_value.read.return_value = b'{"n_restored": 1}'
             urlopen.return_value = response
-            with patch.object(llamacpp, "_cache_restore_attempted", False):
+            with patch.object(llamacpp, "_cache_restore_attempted", set()):
                 llamacpp.restore_cache()
 
             request = urlopen.call_args.args[0]
             self.assertIn("/slots/0?action=restore", request.full_url)
             self.assertEqual(json.loads(request.data), {"filename": config.LLAMA_CPP_CACHE_FILE})
+
+    def test_fast_lane_restores_its_own_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.object(config, "FAST_MODEL", "fast-lane"), \
+                patch.object(config, "LLAMA_CPP_FAST_URL", "http://127.0.0.1:8081"), \
+                patch.object(config, "LLAMA_CPP_FAST_SLOT", 0), \
+                patch.object(config, "LLAMA_CPP_FAST_CACHE_DIR", Path(tmp)), \
+                patch.object(config, "LLAMA_CPP_FAST_CACHE_FILE", "fast.bin"), \
+                patch.object(llamacpp, "_cache_restore_attempted", set()), \
+                patch("sage.llamacpp.urllib.request.urlopen") as urlopen:
+            (Path(tmp) / "fast.bin").write_bytes(b"snapshot")
+            response = MagicMock()
+            response.__enter__.return_value.read.return_value = b'{"n_restored": 1}'
+            urlopen.return_value = response
+
+            llamacpp.restore_cache("fast-lane")
+
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.full_url, "http://127.0.0.1:8081/slots/0?action=restore")
+        self.assertEqual(json.loads(request.data), {"filename": "fast.bin"})
 
 
 if __name__ == "__main__":

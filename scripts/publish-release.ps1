@@ -76,7 +76,7 @@ try {
         $origin = (& git -C $stage remote get-url origin).Trim()
         if ($LASTEXITCODE -ne 0 -or $origin -notin @($RepositoryUrl, 'git@github.com:Kyan-vd-anker/SAGE.git', 'ssh://git@github.com/Kyan-vd-anker/SAGE.git')) { throw 'The selected checkout is not the requested SAGE GitHub repository.' }
     } else {
-        & git clone --quiet $RepositoryUrl $stage
+        & git clone --config core.longpaths=true --quiet $RepositoryUrl $stage
         if ($LASTEXITCODE -ne 0) { throw 'Could not clone GitHub. Check sign-in and repository access. No local data was uploaded.' }
     }
     $branch = (& git -C $stage branch --show-current).Trim()
@@ -104,7 +104,7 @@ try {
     if ($staged.Count -eq 0) { throw 'There are no changes to publish.' }
     & git -C $stage show-ref --verify --quiet "refs/tags/$tag"
     if ($LASTEXITCODE -eq 0) { throw "Tag $tag already exists. Update VERSION before publishing another release." }
-    & git -C $stage commit -m "SAGE $tag - $summaryLine"
+    & git -C $stage commit -m "SAGE $tag - $summaryLine" -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
     if ($LASTEXITCODE -ne 0) { throw 'Git commit failed. Configure your Git author name and email, then retry.' }
     & git -C $stage tag -a $tag -m "SAGE $tag"
     if ($LASTEXITCODE -ne 0) { throw 'Could not create the version tag.' }

@@ -24,6 +24,16 @@ LLAMA_CPP_CACHE_FILE = os.getenv("SAGE_LLAMA_CPP_CACHE_FILE", "sage-session.bin"
 if Path(LLAMA_CPP_CACHE_FILE).name != LLAMA_CPP_CACHE_FILE or LLAMA_CPP_CACHE_FILE in {"", ".", ".."}:
     raise ValueError("SAGE_LLAMA_CPP_CACHE_FILE must be a filename, not a path")
 LLAMA_CPP_API_KEY = os.getenv("SAGE_LLAMA_CPP_API_KEY", "")
+LLAMA_CPP_FAST_URL = os.getenv("SAGE_LLAMA_CPP_FAST_URL", "").strip().rstrip("/")
+LLAMA_CPP_FAST_MODEL = os.getenv("SAGE_LLAMA_CPP_FAST_MODEL", "sage-fast")
+LLAMA_CPP_FAST_SLOT = int(os.getenv("SAGE_LLAMA_CPP_FAST_SLOT", "0"))
+if LLAMA_CPP_FAST_SLOT < 0:
+    raise ValueError("SAGE_LLAMA_CPP_FAST_SLOT must be zero or greater")
+LLAMA_CPP_FAST_CACHE_DIR = Path(os.getenv("SAGE_LLAMA_CPP_FAST_CACHE_DIR", DATA / "kv-cache-fast"))
+LLAMA_CPP_FAST_CACHE_FILE = os.getenv("SAGE_LLAMA_CPP_FAST_CACHE_FILE", "sage-fast-session.bin")
+if Path(LLAMA_CPP_FAST_CACHE_FILE).name != LLAMA_CPP_FAST_CACHE_FILE or LLAMA_CPP_FAST_CACHE_FILE in {"", ".", ".."}:
+    raise ValueError("SAGE_LLAMA_CPP_FAST_CACHE_FILE must be a filename, not a path")
+LLAMA_CPP_FAST_API_KEY = os.getenv("SAGE_LLAMA_CPP_FAST_API_KEY", LLAMA_CPP_API_KEY)
 # One context window for chat lanes, background jobs and VS Code. A 64K window can use several GB of KV cache;
 # lower SAGE_NUM_CTX if the inference backend runs out of memory or becomes too slow.
 NUM_CTX = max(2048, int(os.getenv("SAGE_NUM_CTX", "65536")))

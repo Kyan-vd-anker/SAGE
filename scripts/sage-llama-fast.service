@@ -1,0 +1,14 @@
+[Unit]
+Description=SAGE llama.cpp fast-lane server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/SAGE
+EnvironmentFile=-%h/.config/sage/llama-fast.env
+ExecStart=/usr/bin/bash %h/SAGE/scripts/run-llamacpp.sh
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
