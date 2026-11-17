@@ -11,6 +11,7 @@ import urllib.error
 from urllib.parse import urlparse
 from .config import OLLAMA_URL, MODEL, CODING_MODEL, REASONING_MODEL, ROUTER_LONG_INPUT_CHARS, VISION_MODEL, EMBED_MODEL
 from . import config as _config
+from . import llamacpp
 
 class OllamaError(RuntimeError): pass
 
@@ -190,7 +191,7 @@ def _stored_system(info):
 def _baked_current(model):
     """True when `model` should be treated as holding Sage's system prompt. Only a proven mismatch (the model was built from an older
     prompt: rebuild it with scripts/build-models.py) turns it off; an unreachable server or an unexpected reply keeps it on."""
-    if not _is_baked_name(model) or not _config.PROMPT_CACHE: return False
+    if _config.LLM_BACKEND != 'ollama' or not _is_baked_name(model) or not _config.PROMPT_CACHE: return False
     now = time.monotonic()
     cached = _BAKED_CHECK.get(str(model))
     if cached and now - cached[0] < 300: return cached[1]
@@ -229,8 +230,8 @@ def _split_dynamic(messages):
 
 
 def _prepare(model, messages):
-    """The messages as they are sent to Ollama."""
-    if _baked_current(model): return _baked(model, messages)
+    """Arrange messages to maximize unchanged-prefix reuse by the selected backend."""
+    if _config.LLM_BACKEND == 'ollama' and _baked_current(model): return _baked(model, messages)
     if _config.PROMPT_CACHE and _config.CHAT_TURNS > 0: return _split_dynamic(messages)
     return messages
 
@@ -240,12 +241,122 @@ def _stable_tools(tools):
     return sorted(tools, key=lambda item: str((item.get('function') or {}).get('name', ''))) if tools else tools
 
 
+def _think_for_model(model):
+    for configured_model, enabled in ((MODEL, _config.FAST_THINK), (CODING_MODEL, _config.DEEP_THINK),
+                                      (REASONING_MODEL, _config.REASONING_THINK)):
+        if model == configured_model: return bool(enabled)
+    return False
+
+
+def _thinking_output_limit(max_tokens, think):
+    return max(max_tokens, 2048) if think and max_tokens is not None else max_tokens
+
+
+def display_model(model):
+    return _config.LLAMA_CPP_MODEL if _config.LLM_BACKEND=='llama_cpp' else model
+
+
+def _llamacpp_stream(data, timeout, on_token=None, cancel=None, background=False, on_request=None, persist=True):
+    global _active_background_conn
+    if persist:llamacpp.restore_cache()
+    request_data=llamacpp.request_body(data)
+    url=urlparse(llamacpp.endpoint('/v1/chat/completions'))
+    factory=http.client.HTTPSConnection if url.scheme=='https' else http.client.HTTPConnection
+    conn=factory(url.hostname,url.port,timeout=timeout)
+    parts=[]
+    reasoning=[]
+    calls={}
+    usage={}
+    timings={}
+    try:
+        with _priority:
+            if background and _background_interrupted.is_set():
+                raise BackgroundInterrupted('Background work yielded to chat.')
+            if background:_active_background_conn=conn
+        if cancel is not None:
+            cancel.conn=conn
+            if cancel.cancelled:raise StreamCancelled('')
+        if on_request:on_request(dict(request_data))
+        conn.request('POST',url.path,body=json.dumps(request_data).encode(),headers=llamacpp.headers())
+        response=conn.getresponse()
+        if response.status!=200:
+            detail=response.read().decode('utf-8','replace')
+            if data.get('tools') and response.status==400 and 'does not support tools' in detail.lower():
+                raise ToolsUnsupported(detail)
+            raise OllamaError(f'llama.cpp request failed at {llamacpp.endpoint("")}: HTTP {response.status}: {detail[:500]}')
+        for raw in response:
+            if background and _background_interrupted.is_set():
+                raise BackgroundInterrupted('Background work yielded to chat.')
+            if cancel is not None and cancel.cancelled:
+                raise StreamCancelled(''.join(parts))
+            line=raw.decode('utf-8','replace').strip()
+            if not line or line.startswith(':') or not line.startswith('data:'):
+                continue
+            payload=line[5:].strip()
+            if payload=='[DONE]':
+                break
+            chunk=json.loads(payload)
+            if chunk.get('error'):
+                raise OllamaError(f"llama.cpp request failed: {chunk['error']}")
+            if chunk.get('usage'):usage.update(chunk['usage'])
+            if chunk.get('timings'):timings.update(chunk['timings'])
+            choices=chunk.get('choices') or []
+            if not choices:continue
+            delta=choices[0].get('delta') or {}
+            piece=delta.get('content') or ''
+            if piece:
+                parts.append(piece)
+                if on_token:on_token(piece)
+            thought=delta.get('reasoning_content') or delta.get('reasoning') or ''
+            if thought:reasoning.append(thought)
+            for item in delta.get('tool_calls') or []:
+                index=int(item.get('index',0))
+                call=calls.setdefault(index,{'id':'','type':'function','function':{'name':'','arguments':''}})
+                if item.get('id'):call['id']=item['id']
+                function=item.get('function') or {}
+                if function.get('name'):call['function']['name']+=function['name']
+                if function.get('arguments') is not None:
+                    value=function['arguments']
+                    call['function']['arguments']+=value if isinstance(value,str) else json.dumps(value,ensure_ascii=False)
+        if background and _background_interrupted.is_set():
+            raise BackgroundInterrupted('Background work yielded to chat.')
+        if cancel is not None and cancel.cancelled:
+            raise StreamCancelled(''.join(parts))
+        reply={'role':'assistant','content':''.join(parts)}
+        if calls:reply['tool_calls']=[calls[index] for index in sorted(calls)]
+        if reasoning:reply['thinking']=''.join(reasoning)
+        if usage.get('prompt_tokens') is not None:
+            reply['_prompt_tokens']=usage['prompt_tokens']
+        _record_speed(data.get('model'),llamacpp.speed_data({'usage':usage,'timings':timings}),_prompt_chars(data))
+        if persist and not background:llamacpp.save_cache()
+        return reply
+    except (BackgroundInterrupted,StreamCancelled,OllamaError,ToolsUnsupported):
+        raise
+    except Exception as exc:
+        if background and _background_interrupted.is_set():
+            raise BackgroundInterrupted('Background work yielded to chat.') from exc
+        if cancel is not None and cancel.cancelled:
+            raise StreamCancelled(''.join(parts)) from exc
+        raise OllamaError(f'llama.cpp request failed at {llamacpp.endpoint("")}: {exc}') from exc
+    finally:
+        if cancel is not None and cancel.conn is conn:cancel.conn=None
+        if background:
+            with _priority:
+                if _active_background_conn is conn:_active_background_conn=None
+        try:conn.close()
+        except Exception:pass
+
+
+def _think_unsupported(status, detail, data):
+    return status == 400 and 'think' in data and 'think' in detail.lower()
+
+
 def _prompt_chars(data):
     return sum(len(str(m.get('content') or '')) for m in (data.get('messages') or []))
 
 
 def _reuse_estimate(row):
-    """Share of the prompt Ollama did not have to evaluate again (estimated from characters; 3.3 characters per token)."""
+    """Share of the prompt not reevaluated by the backend (estimated from characters; 3.3 characters per token)."""
     if not row or row[6] is None or row[7] < 400: return None
     return round(max(0.0, min(1.0, 1 - row[6] / (row[7] / 3.3))), 2)
 
@@ -281,19 +392,23 @@ def _background_request(messages, max_tokens, timeout, model):
     for a background task to finish.
     """
     global _active_background_conn
-    url=urlparse(OLLAMA_URL.rstrip('/')+'/api/chat')
-    factory=http.client.HTTPSConnection if url.scheme=='https' else http.client.HTTPConnection
-    conn=factory(url.hostname,url.port,timeout=timeout)
-    with _priority:
-        if _background_interrupted.is_set(): raise BackgroundInterrupted('Background work yielded to chat.')
-        _active_background_conn=conn
     deadline=time.monotonic()+timeout
+    conn=None
     try:
         prepared_messages=_prepare(model,messages)
         _check_context_window(prepared_messages,None,max_tokens,_config.NUM_CTX,model)
-        data={"model": model, "messages": prepared_messages, "stream": True, "keep_alive": _config.OLLAMA_KEEP_ALIVE}
+        data={"model": model, "messages": prepared_messages, "stream": True, "keep_alive": _config.OLLAMA_KEEP_ALIVE,
+              "think": _think_for_model(model)}
         if max_tokens is not None: data['options']={"num_predict": max_tokens}
         data.setdefault('options',{})['num_ctx']=_config.NUM_CTX   # one window for every caller, so Ollama never reloads the model for a different size
+        if _config.LLM_BACKEND=='llama_cpp':
+            return _llamacpp_stream(data,timeout,background=True)
+        url=urlparse(OLLAMA_URL.rstrip('/')+'/api/chat')
+        factory=http.client.HTTPSConnection if url.scheme=='https' else http.client.HTTPConnection
+        conn=factory(url.hostname,url.port,timeout=timeout)
+        with _priority:
+            if _background_interrupted.is_set(): raise BackgroundInterrupted('Background work yielded to chat.')
+            _active_background_conn=conn
         conn.request('POST',url.path,body=json.dumps(data).encode(),headers={"Content-Type":"application/json"})
         if _background_interrupted.is_set(): raise BackgroundInterrupted('Background work yielded to chat.')
         response=conn.getresponse()
@@ -320,9 +435,10 @@ def _background_request(messages, max_tokens, timeout, model):
         raise OllamaError(f"Ollama request failed at {OLLAMA_URL}: {exc}") from exc
     finally:
         with _priority:
-            if _active_background_conn is conn: _active_background_conn=None
-        try: conn.close()
-        except Exception: pass
+            if conn is not None and _active_background_conn is conn: _active_background_conn=None
+        if conn is not None:
+            try: conn.close()
+            except Exception: pass
 
 class StreamCancelled(RuntimeError):
     """Raised when the user pressed Stop; `partial` holds what had been generated so far."""
@@ -356,7 +472,7 @@ class StreamCancel:
 
 
 def chat_stream(messages, tools=None, max_tokens=None, on_token=None, cancel=None, timeout=600, model=None, num_ctx=None,
-                on_request=None):
+                on_request=None, cache_session=True):
     """Foreground chat that streams: on_token(text) is called for every piece of text as it is generated.
     Returns the finished assistant message (content and any tool_calls). `timeout` applies to silence
     between pieces, not to the whole reply."""
@@ -370,24 +486,33 @@ def chat_stream(messages, tools=None, max_tokens=None, on_token=None, cancel=Non
         context_window=int(num_ctx if num_ctx is not None else _config.NUM_CTX)
         prepared_messages=_prepare(model,messages)
         stable_tools=_stable_tools(tools) if tools else None
-        _check_context_window(prepared_messages,stable_tools,max_tokens,context_window,model)
         url = urlparse(OLLAMA_URL.rstrip('/') + '/api/chat')
         factory = http.client.HTTPSConnection if url.scheme == 'https' else http.client.HTTPConnection
-        conn = factory(url.hostname, url.port, timeout=timeout)
-        if cancel is not None:
-            cancel.conn = conn
-            if cancel.cancelled: raise StreamCancelled('')
-        data = {"model": model, "messages": prepared_messages, "stream": True, "keep_alive": _config.OLLAMA_KEEP_ALIVE}
+        think=_think_for_model(model)
+        max_tokens=_thinking_output_limit(max_tokens,think)
+        _check_context_window(prepared_messages,stable_tools,max_tokens,context_window,model)
+        data = {"model": model, "messages": prepared_messages, "stream": True, "keep_alive": _config.OLLAMA_KEEP_ALIVE,
+                "think": think}
         if stable_tools: data['tools'] = stable_tools
         if max_tokens is not None: data['options'] = {"num_predict": max_tokens}
         data.setdefault('options', {})['num_ctx'] = context_window
-        if on_request: on_request(data)
-        if cancel is not None and cancel.cancelled: raise StreamCancelled('')
-        conn.request('POST', url.path, body=json.dumps(data).encode(), headers={"Content-Type": "application/json"})
-        if cancel is not None and cancel.cancelled: raise StreamCancelled('')
-        response = conn.getresponse()
-        if response.status != 200:
+        if _config.LLM_BACKEND=='llama_cpp':
+            return _llamacpp_stream(data,timeout,on_token,cancel,on_request=on_request,persist=cache_session)
+        for attempt in range(2):
+            if cancel is not None and cancel.cancelled: raise StreamCancelled('')
+            conn = factory(url.hostname, url.port, timeout=timeout)
+            if cancel is not None:
+                cancel.conn = conn
+                if cancel.cancelled: raise StreamCancelled('')
+            if on_request: on_request(dict(data))
+            conn.request('POST', url.path, body=json.dumps(data).encode(), headers={"Content-Type": "application/json"})
+            if cancel is not None and cancel.cancelled: raise StreamCancelled('')
+            response = conn.getresponse()
+            if response.status == 200: break
             detail = response.read().decode('utf-8', 'replace')
+            if attempt == 0 and _think_unsupported(response.status, detail, data):
+                conn.close();conn=None;data.pop('think')
+                continue
             if tools and response.status == 400 and 'does not support tools' in detail.lower(): raise ToolsUnsupported(detail)
             raise OllamaError(f"Ollama request failed at {OLLAMA_URL}: HTTP {response.status}: {detail[:500]}")
         for raw in response:
@@ -422,6 +547,49 @@ def chat_stream(messages, tools=None, max_tokens=None, on_token=None, cancel=Non
         _release()
 
 
+def _post_chat_json(data, timeout, on_request=None, background=False):
+    global _active_background_response
+    llama_backend=_config.LLM_BACKEND=='llama_cpp'
+    if llama_backend:
+        llamacpp.restore_cache()
+        request_data=llamacpp.request_body(data)
+        request_url=llamacpp.endpoint('/v1/chat/completions')
+        request_headers=llamacpp.headers()
+    else:
+        request_data=dict(data)
+        request_url=OLLAMA_URL.rstrip('/')+'/api/chat'
+        request_headers={'Content-Type':'application/json'}
+    for attempt in range(2):
+        if background and _background_interrupted.is_set():
+            raise BackgroundInterrupted('Background work yielded to chat.')
+        if on_request: on_request(dict(request_data))
+        req=urllib.request.Request(request_url,data=json.dumps(request_data).encode(),
+                                   headers=request_headers,method='POST')
+        try:
+            with urllib.request.urlopen(req,timeout=timeout) as response:
+                if background:
+                    with _priority: _active_background_response=response
+                try: result=json.loads(response.read())
+                finally:
+                    if background:
+                        with _priority:
+                            if _active_background_response is response: _active_background_response=None
+                if llama_backend:
+                    result={'message':llamacpp.response_message(result),**llamacpp.speed_data(result)}
+                    if not background:llamacpp.save_cache()
+                return result
+        except urllib.error.HTTPError as exc:
+            raw=exc.read()
+            detail=raw.decode('utf-8','replace')
+            if attempt==0 and _think_unsupported(exc.code,detail,request_data):
+                request_data.pop('think')
+                continue
+            if background and _background_interrupted.is_set():
+                raise BackgroundInterrupted('Background work yielded to chat.') from exc
+            raise urllib.error.HTTPError(exc.url,exc.code,exc.msg,exc.hdrs,io.BytesIO(raw)) from exc
+    raise OllamaError('Ollama rejected the thinking option but the retry was not attempted.')
+
+
 def chat_message(messages, tools=None, timeout=600, max_tokens=None, background=False, require_tool=False, force_schema=False,
                  model=None, on_request=None):
     global _active_background_response
@@ -430,31 +598,26 @@ def chat_message(messages, tools=None, timeout=600, max_tokens=None, background=
     # background requests are closed by interrupt_background() on new input.
     _acquire(background)
     try:
+        think=_think_for_model(model)
+        max_tokens=_thinking_output_limit(max_tokens,think)
         prepared_messages=_prepare(model,messages)
         stable_tools=_stable_tools(tools) if tools else None
         _check_context_window(prepared_messages,stable_tools,max_tokens,_config.NUM_CTX,model)
         if background and not tools:
             return _background_request(messages, max_tokens, timeout, model)
-        data = {"model": model, "messages": prepared_messages, "stream": False, "keep_alive": _config.OLLAMA_KEEP_ALIVE}
+        data = {"model": model, "messages": prepared_messages, "stream": False, "keep_alive": _config.OLLAMA_KEEP_ALIVE,
+                "think": think}
         if stable_tools: data['tools'] = stable_tools
         if max_tokens is not None: data['options'] = {"num_predict": max_tokens}
         data.setdefault('options', {})['num_ctx'] = _config.NUM_CTX
-        if on_request: on_request(data)
-        payload = json.dumps(data).encode()
-        req = urllib.request.Request(OLLAMA_URL.rstrip('/') + '/api/chat', data=payload,
-                                     headers={"Content-Type": "application/json"}, method="POST")
         try:
             if force_schema and tools:
                 # Skip the native tool API and go straight to the constrained-JSON tool picker below.
-                raise urllib.error.HTTPError(OLLAMA_URL,400,'forced schema',{},io.BytesIO(b'does not support tools'))
-            with urllib.request.urlopen(req, timeout=timeout) as response:
-                if background:
-                    with _priority: _active_background_response=response
-                try: data = json.loads(response.read())
-                finally:
-                    if background:
-                        with _priority:
-                            if _active_background_response is response: _active_background_response=None
+                forced_data=llamacpp.request_body(data) if _config.LLM_BACKEND=='llama_cpp' else dict(data)
+                if on_request: on_request(forced_data)
+                request_url=llamacpp.endpoint('/v1/chat/completions') if _config.LLM_BACKEND=='llama_cpp' else OLLAMA_URL
+                raise urllib.error.HTTPError(request_url,400,'forced schema',{},io.BytesIO(b'does not support tools'))
+            data=_post_chat_json(data,timeout,on_request,background)
             _record_speed(model, data)
             return data.get('message', {})
         except urllib.error.HTTPError as exc:
@@ -475,22 +638,29 @@ def chat_message(messages, tools=None, timeout=600, max_tokens=None, background=
                 fallback_messages=[{'role':'system','content':instruction}]+messages
                 output_schema={'type':'object','properties':{'tool':{'type':'string','enum':([] if require_tool else ['none'])+names},'arguments':{'type':'object'},'response':{'type':'string'}},'required':['tool','arguments','response'],'additionalProperties':False}
                 prepared_fallback=_prepare(model,fallback_messages)
-                fallback_tokens=min(max_tokens or 256,512)
+                fallback_tokens=_thinking_output_limit(min(max_tokens or 256,512),think)
                 _check_context_window(prepared_fallback,output_schema,fallback_tokens,_config.NUM_CTX,model)
-                fallback={'model':model,'messages':prepared_fallback,'stream':False,'keep_alive':_config.OLLAMA_KEEP_ALIVE,'format':output_schema,'options':{'num_predict':fallback_tokens,'num_ctx':_config.NUM_CTX}}
-                if on_request: on_request(fallback)
-                retry=urllib.request.Request(OLLAMA_URL.rstrip('/')+'/api/chat',data=json.dumps(fallback).encode(),headers={'Content-Type':'application/json'},method='POST')
+                fallback={'model':model,'messages':prepared_fallback,'stream':False,'keep_alive':_config.OLLAMA_KEEP_ALIVE,
+                          'format':output_schema,'options':{'num_predict':fallback_tokens,'num_ctx':_config.NUM_CTX},
+                          'think':think}
                 try:
-                    with urllib.request.urlopen(retry,timeout=timeout) as response: fallback_data=json.loads(response.read()); _record_speed(model,fallback_data); reply=fallback_data.get('message',{})
+                    fallback_data=_post_chat_json(fallback,timeout,on_request,background)
+                    _record_speed(model,fallback_data);reply=fallback_data.get('message',{})
                     reply['_sage_tool_fallback']=True
                     return reply
                 except Exception as retry_exc:
-                    raise OllamaError(f"Ollama tool fallback failed at {OLLAMA_URL}: {retry_exc}") from retry_exc
-            raise OllamaError(f"Ollama request failed at {OLLAMA_URL}: HTTP {exc.code}: {detail[:500]}") from exc
+                    backend='llama.cpp' if _config.LLM_BACKEND=='llama_cpp' else 'Ollama'
+                    url=llamacpp.endpoint("") if _config.LLM_BACKEND=='llama_cpp' else OLLAMA_URL
+                    raise OllamaError(f"{backend} tool fallback failed at {url}: {retry_exc}") from retry_exc
+            backend='llama.cpp' if _config.LLM_BACKEND=='llama_cpp' else 'Ollama'
+            url=llamacpp.endpoint("") if _config.LLM_BACKEND=='llama_cpp' else OLLAMA_URL
+            raise OllamaError(f"{backend} request failed at {url}: HTTP {exc.code}: {detail[:500]}") from exc
         except BackgroundInterrupted: raise
         except Exception as exc:
             if background and _background_interrupted.is_set(): raise BackgroundInterrupted('Background work yielded to chat.') from exc
-            raise OllamaError(f"Ollama request failed at {OLLAMA_URL}: {exc}") from exc
+            backend='llama.cpp' if _config.LLM_BACKEND=='llama_cpp' else 'Ollama'
+            url=llamacpp.endpoint("") if _config.LLM_BACKEND=='llama_cpp' else OLLAMA_URL
+            raise OllamaError(f"{backend} request failed at {url}: {exc}") from exc
     finally:
         if background:
             with _priority: _active_background_response=None
@@ -509,6 +679,32 @@ def _lanes():
 
 
 def status():
+    if _config.LLM_BACKEND=='llama_cpp':
+        try:
+            request=urllib.request.Request(llamacpp.endpoint('/health'),headers=llamacpp.headers())
+            with urllib.request.urlopen(request,timeout=3) as response:
+                health=json.loads(response.read() or b'{}')
+            ollama_models=[]
+            try:
+                request=urllib.request.Request(OLLAMA_URL.rstrip('/')+'/api/tags')
+                with urllib.request.urlopen(request,timeout=2) as response:
+                    ollama_models=json.loads(response.read()).get('models',[])
+            except (OSError,ValueError,urllib.error.URLError):
+                pass
+            names={str(item.get('name','')) for item in ollama_models}
+            def ollama_installed(name):
+                return name in names or f'{name}:latest' in names or (name.endswith(':latest') and name[:-7] in names)
+            return {"online": True, "backend":"llama.cpp", "model":_config.LLAMA_CPP_MODEL, "installed":True,
+                    "coding_model":True, "reasoning_model":True, "vision_model":ollama_installed(VISION_MODEL),
+                    "embedding_model":ollama_installed(EMBED_MODEL), "models":[_config.LLAMA_CPP_MODEL],
+                    "server":health, "lanes":[
+                        {"role":role,"model":_config.LLAMA_CPP_MODEL,"installed":True}
+                        for role in ("Fast","Coding","Reasoning")
+                    ]}
+        except Exception as exc:
+            return {"online":False,"backend":"llama.cpp","model":_config.LLAMA_CPP_MODEL,"error":str(exc),
+                    "lanes":[{"role":role,"model":_config.LLAMA_CPP_MODEL,"installed":None}
+                             for role in ("Fast","Coding","Reasoning")]}
     req = urllib.request.Request(OLLAMA_URL.rstrip('/') + '/api/tags')
     try:
         with urllib.request.urlopen(req, timeout=3) as response:
