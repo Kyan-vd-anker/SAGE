@@ -37,13 +37,12 @@ cmake -S ~/llama.cpp -B ~/llama.cpp/build -DCMAKE_BUILD_TYPE=Release
 cmake --build ~/llama.cpp/build --config Release -j6 --target llama-server
 ```
 
-Create `~/.config/sage/llama.env` containing the model path, for example:
+Copy the included [llama.env.example](llama.env.example) to `~/.config/sage/llama.env`, edit the placeholder paths, and choose a context size. A 32K starting point is safer on a 16 GB machine; Sage and the llama.cpp service must use the same `SAGE_NUM_CTX`.
 
-```
-SAGE_LLAMA_CPP_MODEL_PATH=/home/kyan/models/qwen3.5-4b-q4_k_m.gguf
-SAGE_LLAMA_CPP_SERVER_BIN=/home/kyan/llama.cpp/build/bin/llama-server
-SAGE_NUM_CTX=65536
-SAGE_LLAMA_CPP_THREADS=6
+```bash
+mkdir -p ~/.config/sage
+cp ~/SAGE/llama.env.example ~/.config/sage/llama.env
+nano ~/.config/sage/llama.env
 ```
 
 Install and start the provided user service:
@@ -67,7 +66,7 @@ Environment=SAGE_LLM_BACKEND=llama_cpp
 Environment=SAGE_LLAMA_CPP_URL=http://127.0.0.1:8080
 Environment=SAGE_LLAMA_CPP_MODEL=sage
 Environment=SAGE_LLAMA_CPP_CACHE_DIR=/home/kyan/SAGE/data/kv-cache
-Environment=SAGE_NUM_CTX=65536
+Environment=SAGE_NUM_CTX=32768
 Environment=SAGE_SEMANTIC_MEMORY=0
 Environment=SAGE_OLLAMA_KEEP_ALIVE=0
 ```
@@ -84,7 +83,7 @@ The **Studio** page is an editor where Sage reads along. Choose LaTeX, Document 
 
 ### Faster first token (optional)
 
-You can store Sage's fixed system prompt and tuned settings inside the models instead of resending them with every request: run `python scripts/build-models.py` from the SAGE folder. It builds `sage-fast`, `sage-coder` and `sage-reason` (with `num_ctx 8192` and tuned temperatures), then tests that each one knows the stored prompt. Switch Sage over by setting `SAGE_FAST_MODEL=sage-fast`, `SAGE_DEEP_MODEL=sage-coder` and `SAGE_REASONING_MODEL=sage-reason`, then restart. Sage detects the `sage-` names and sends only the changing text (date, memories) per request. Remove the three settings to go back. Re-run the script whenever the prompt in `sage/agent.py` changes.
+You can store Sage's fixed system prompt and tuned settings inside the Ollama models instead of resending them with every request: run `python scripts/build-models.py` from the SAGE folder. It builds `sage-fast`, `sage-coder` and `sage-reason` (using the configured `SAGE_NUM_CTX` and lane-specific temperatures), then tests that each one knows the stored prompt. To only generate the three Modelfiles without contacting Ollama, run `python scripts/build-models.py --write-only`; the files are written to the ignored `modelfiles/` folder. Switch Sage over by setting `SAGE_FAST_MODEL=local/sage-fast`, `SAGE_DEEP_MODEL=local/sage-coder` and `SAGE_REASONING_MODEL=local/sage-reason`, then restart. Sage detects these names and sends only the changing text (date, memories) per request. Remove the three settings to go back. Re-run the script whenever the prompt in `sage/agent.py` changes.
 
 ### Install or update on Windows
 
