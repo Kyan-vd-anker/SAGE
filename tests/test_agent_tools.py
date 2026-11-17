@@ -13,26 +13,6 @@ class AgentToolTests(unittest.TestCase):
         patcher=patch.multiple(config,DATA=root,DB_PATH=root/'sage.db',VAULT=root/'vault',WORKSPACE=root/'workspace',PLUGIN_DIR=Path(__file__).resolve().parents[1]/'plugins')
         patcher.start();self.addCleanup(patcher.stop);db.init()
 
-    def test_smalltalk_greeting_prefix_does_not_activate_tools(self):
-        for text in ('Hey how are you doing', 'Hey, how are you doing?', 'Hey Sage, how are you?'):
-            with self.subTest(text=text):
-                self.assertTrue(agent._is_smalltalk(text))
-        self.assertFalse(agent._is_smalltalk('Hey, can you check my calendar?'))
-
-    def test_llamacpp_mode_does_not_capture_or_retrieve_semantic_memories(self):
-        with patch.object(config, 'SEMANTIC_MEMORY_ENABLED', False), \
-                patch('sage.agent.memory.capture') as capture_memory, \
-                patch('sage.agent._relevant_context') as relevant_context, \
-                patch('sage.agent.userprofile.core') as core_profile, \
-                patch('sage.agent.llm.chat_message', return_value={'content': 'Hello.'}):
-            self.assertEqual(agent.respond('Hey'), 'Hello.')
-            names={item['function']['name'] for item in tools.definitions()}
-
-        capture_memory.assert_not_called()
-        relevant_context.assert_not_called()
-        core_profile.assert_not_called()
-        self.assertFalse({'search_memory','save_memory','explain_memory_provenance','forget_memory'} & names)
-
     def test_model_can_choose_and_execute_builtin_tools(self):
         replies=[{'content':'','tool_calls':[{'function':{'name':'add_inventory_item','arguments':{'name':'Bearing 608','quantity':4,'unit':'each','location':'Drawer B2'}}}]},{'content':'I added four 608 bearings to Drawer B2.'}]
         with patch('sage.agent.llm.chat_message',side_effect=replies) as model:

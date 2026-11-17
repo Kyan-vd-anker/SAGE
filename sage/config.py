@@ -11,21 +11,8 @@ PLUGIN_DIR = Path(os.getenv("SAGE_PLUGINS", ROOT / "plugins"))
 STATIC_DIR = Path(__file__).parent / "static"
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
 OLLAMA_KEEP_ALIVE = os.getenv("SAGE_OLLAMA_KEEP_ALIVE", "30m")  # set to 0 to unload each model after a request
-LLM_BACKEND = os.getenv("SAGE_LLM_BACKEND", "ollama").strip().lower()
-if LLM_BACKEND not in {"ollama", "llama_cpp"}:
-    raise ValueError("SAGE_LLM_BACKEND must be 'ollama' or 'llama_cpp'")
-LLAMA_CPP_URL = os.getenv("SAGE_LLAMA_CPP_URL", "http://127.0.0.1:8080").rstrip("/")
-LLAMA_CPP_MODEL = os.getenv("SAGE_LLAMA_CPP_MODEL", "sage")
-LLAMA_CPP_SLOT = int(os.getenv("SAGE_LLAMA_CPP_SLOT", "0"))
-if LLAMA_CPP_SLOT < 0:
-    raise ValueError("SAGE_LLAMA_CPP_SLOT must be zero or greater")
-LLAMA_CPP_CACHE_DIR = Path(os.getenv("SAGE_LLAMA_CPP_CACHE_DIR", DATA / "kv-cache"))
-LLAMA_CPP_CACHE_FILE = os.getenv("SAGE_LLAMA_CPP_CACHE_FILE", "sage-session.bin")
-if Path(LLAMA_CPP_CACHE_FILE).name != LLAMA_CPP_CACHE_FILE or LLAMA_CPP_CACHE_FILE in {"", ".", ".."}:
-    raise ValueError("SAGE_LLAMA_CPP_CACHE_FILE must be a filename, not a path")
-LLAMA_CPP_API_KEY = os.getenv("SAGE_LLAMA_CPP_API_KEY", "")
-# One context window for chat lanes, background jobs and VS Code. A 64K window can use several GB of KV cache;
-# lower SAGE_NUM_CTX if the inference backend runs out of memory or becomes too slow.
+# One context window (num_ctx) for every chat lane, background job and VS Code endpoint. A 64K window can use several GB of KV cache;
+# lower SAGE_NUM_CTX if Ollama runs out of memory or becomes too slow.
 NUM_CTX = max(2048, int(os.getenv("SAGE_NUM_CTX", "65536")))
 _default_new_input_tokens = min(8192, NUM_CTX // 2)
 MAX_NEW_INPUT_TOKENS = int(os.getenv("SAGE_MAX_NEW_INPUT_TOKENS", str(_default_new_input_tokens)))
@@ -56,14 +43,14 @@ SPEAKER_ROOM = os.getenv("SAGE_SPEAKER_ROOM", "bedroom")  # the room the speaker
 DOC_MODEL = os.getenv("SAGE_DOC_MODEL", REASONING_MODEL)
 DOC_NUM_CTX = int(os.getenv("SAGE_DOC_NUM_CTX", "8192"))
 DOC_MAP_MAX_CALLS = int(os.getenv("SAGE_DOC_MAP_MAX_CALLS", "16"))  # model passes used to read a document too long for one window
-# Prompt prefix caching (see llm.py). The inference backend can reuse the unchanged beginning of consecutive prompts.
+# Prompt prefix caching (see llm.py). Ollama only re-reads the part of a prompt that differs from the start of the previous one.
 # SAGE_PROMPT_CACHE=0 turns the prompt re-arranging off. SAGE_CHAT_TURNS is how many recent exchanges (question + answer) are sent as real
 # conversation messages so they are reused from the cache instead of being retrieved as quoted context; 0 keeps the old one-message prompt.
 # The window moves in blocks of SAGE_CHAT_TURN_BLOCK exchanges, so the start of the conversation stays identical (and cached) between turns.
 PROMPT_CACHE = os.getenv("SAGE_PROMPT_CACHE", "1") != "0"
-CHAT_TURNS = max(0, int(os.getenv("SAGE_CHAT_TURNS", "12" if LLM_BACKEND == "llama_cpp" else "0")))
+CHAT_TURNS = max(0, int(os.getenv("SAGE_CHAT_TURNS", "0")))
 CHAT_TURN_BLOCK = max(1, int(os.getenv("SAGE_CHAT_TURN_BLOCK", "3")))
-CHAT_HISTORY_CHARS = int(os.getenv("SAGE_CHAT_HISTORY_CHARS", "24000" if LLM_BACKEND == "llama_cpp" else "6000"))  # about 8,000 tokens in llama.cpp mode
+CHAT_HISTORY_CHARS = int(os.getenv("SAGE_CHAT_HISTORY_CHARS", "6000"))      # budget for the transcript (about 1,800 tokens)
 CHAT_MESSAGE_CHARS = int(os.getenv("SAGE_CHAT_MESSAGE_CHARS", "1500"))      # one long message is cut here before it enters the transcript
 STUDIO_MODEL = os.getenv("SAGE_STUDIO_MODEL", "")  # model that reviews Studio text; empty = fast lane for documents, deep lane for LaTeX and sheets
 LOGIN_EXEMPT_IPS = {item.strip() for item in os.getenv("SAGE_LOGIN_EXEMPT_IPS", "").split(",") if item.strip()}  # devices that skip the login (e.g. wall display); empty by default
@@ -83,7 +70,6 @@ REASONING_THINK = _flag("SAGE_THINK_REASONING", True)
 # Memory (memory.py, entities.py, userprofile.py, capture.py)
 CORE_PROFILE_CHARS = int(os.getenv("SAGE_CORE_PROFILE_CHARS", "1400"))              # always-on profile block (about 400 tokens), part of the cached prompt prefix
 CORE_PROFILE_VOICE_CHARS = int(os.getenv("SAGE_CORE_PROFILE_VOICE_CHARS", "450"))   # the smaller block used for voice and small talk
-SEMANTIC_MEMORY_ENABLED = _flag("SAGE_SEMANTIC_MEMORY", LLM_BACKEND != "llama_cpp")
 CAPTURE_ENABLED = _flag("SAGE_MEMORY_CAPTURE", True)                                 # idle-time LLM extraction of memories, entities and relations after a reply
 PROJECT_STATE_ENABLED = _flag("SAGE_PROJECT_STATE", True)                            # idle-time "state of play" summaries per project
 # Library (library.py): Sage's index of the user's own files. SAGE_LIBRARY_ROOTS lists folders (Obsidian vault, notes, datasheets), separated by ";".

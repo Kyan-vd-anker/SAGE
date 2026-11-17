@@ -1318,7 +1318,7 @@ def _summarize(message, docs, ask, emit, num_ctx, answer_tokens):
 
 
 def make_ask(chat_stream, model, num_ctx, cancel=None):
-    """Adapter used by the agent: document calls carry num_ctx, can be cancelled, and don't persist KV."""
+    """Adapter used by the agent: wraps llm.chat_stream so every document call carries num_ctx and can be cancelled."""
     def ask(messages, max_tokens):
-        return chat_stream(messages, max_tokens=max_tokens, cancel=cancel, model=model, num_ctx=num_ctx, cache_session=False)
+        return chat_stream(messages, max_tokens=max_tokens, cancel=cancel, model=model, num_ctx=num_ctx)
     return ask

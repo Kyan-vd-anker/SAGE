@@ -84,8 +84,6 @@ BUILTINS += extra_tools.BUILTINS
 def definitions():
     result=[]; names=set()
     for name,description,schema,*rest in BUILTINS:
-        if not config.SEMANTIC_MEMORY_ENABLED and name in {'search_memory','save_memory','explain_memory_provenance','forget_memory'}:
-            continue
         names.add(name)
         result.append({"type":"function","function":{"name":name,"description":description,"parameters":schema}})
     for meta in plugins.discover():
