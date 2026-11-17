@@ -229,8 +229,23 @@ def _split_dynamic(messages):
     return [first] + rest
 
 
+def _llamacpp_prompt(messages):
+    """Keep all system instructions in one leading message, as common llama.cpp chat templates require."""
+    system = []
+    rest = []
+    for message in messages:
+        if message.get('role') == 'system':
+            content = str(message.get('content') or '')
+            if content.strip(): system.append(content)
+        else:
+            rest.append(message)
+    if not system: return messages
+    return [{'role': 'system', 'content': '\n\n'.join(system)}] + rest
+
+
 def _prepare(model, messages):
     """Arrange messages to maximize unchanged-prefix reuse by the selected backend."""
+    if _config.LLM_BACKEND == 'llama_cpp': return _llamacpp_prompt(messages)
     if _config.LLM_BACKEND == 'ollama' and _baked_current(model): return _baked(model, messages)
     if _config.PROMPT_CACHE and _config.CHAT_TURNS > 0: return _split_dynamic(messages)
     return messages

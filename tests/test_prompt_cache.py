@@ -44,6 +44,22 @@ class PromptLayoutTests(unittest.TestCase):
         self.assertEqual(sent[3], {'role': 'system', 'content': 'Notes: it is Monday 10:42.'})
         self.assertEqual(sent[4], history[2])
 
+    def test_llamacpp_keeps_system_messages_at_the_start(self):
+        messages = [
+            {'role': 'system', 'content': f'{STATIC}\n\nProject notes.'},
+            {'role': 'user', 'content': 'first question'},
+            {'role': 'assistant', 'content': 'first answer'},
+            {'role': 'system', 'content': 'Current date: Monday.'},
+            {'role': 'user', 'content': 'follow-up'},
+        ]
+        with patch.object(llm._config, 'LLM_BACKEND', 'llama_cpp'), patch.object(llm._config, 'CHAT_TURNS', 12):
+            sent = llm._prepare('sage-fast', messages)
+
+        self.assertEqual(sent[0]['role'], 'system')
+        self.assertIn('Project notes.', sent[0]['content'])
+        self.assertIn('Current date: Monday.', sent[0]['content'])
+        self.assertEqual([message['role'] for message in sent[1:]], ['user', 'assistant', 'user'])
+
     def test_a_tool_loop_does_not_move_the_split_text(self):
         base = [{'role': 'system', 'content': f'{STATIC}\n\nNotes.'}, {'role': 'user', 'content': 'q'}]
         loop = base + [{'role': 'assistant', 'content': '', 'tool_calls': [{'function': {'name': 'x'}}]}, {'role': 'tool', 'content': 'r'}]
