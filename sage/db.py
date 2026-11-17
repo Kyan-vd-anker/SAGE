@@ -115,6 +115,42 @@ def init():
             c.execute("UPDATE memories SET tier='episodic' WHERE tier='semantic' AND kind='daily_summary'")
             c.execute("UPDATE memories SET valid_from=created_at WHERE valid_from=''")
             c.execute("INSERT OR REPLACE INTO settings(key,value,updated_at) VALUES('memory_tiers_v1','1',?)", (now(),))
+        # Events as memories (chronicle.py), the indexed library (library.py), and answer feedback and evals (evals.py).
+        _add_columns(c,'memories',{'feedback_score':'INTEGER NOT NULL DEFAULT 0'})
+        c.executescript('''
+        CREATE TABLE IF NOT EXISTS chronicle_queue(id INTEGER PRIMARY KEY, source TEXT NOT NULL, row_id INTEGER NOT NULL, created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS chronicle_seen(key TEXT PRIMARY KEY, memory_id INTEGER, created_at TEXT NOT NULL);
+        CREATE TRIGGER IF NOT EXISTS chronicle_workshop AFTER INSERT ON workshop_entries BEGIN
+            INSERT INTO chronicle_queue(source,row_id,created_at) VALUES('workshop',NEW.id,strftime('%Y-%m-%dT%H:%M:%S+00:00','now')); END;
+        CREATE TRIGGER IF NOT EXISTS chronicle_decision AFTER INSERT ON decision_log BEGIN
+            INSERT INTO chronicle_queue(source,row_id,created_at) VALUES('decision',NEW.id,strftime('%Y-%m-%dT%H:%M:%S+00:00','now')); END;
+        CREATE TRIGGER IF NOT EXISTS chronicle_failure AFTER INSERT ON failure_lessons BEGIN
+            INSERT INTO chronicle_queue(source,row_id,created_at) VALUES('failure',NEW.id,strftime('%Y-%m-%dT%H:%M:%S+00:00','now')); END;
+        CREATE TRIGGER IF NOT EXISTS chronicle_measurement AFTER INSERT ON measurement_runs BEGIN
+            INSERT INTO chronicle_queue(source,row_id,created_at) VALUES('measurement',NEW.id,strftime('%Y-%m-%dT%H:%M:%S+00:00','now')); END;
+        CREATE TRIGGER IF NOT EXISTS chronicle_task_done AFTER UPDATE OF status ON tasks WHEN NEW.status='done' AND OLD.status IS NOT 'done' BEGIN
+            INSERT INTO chronicle_queue(source,row_id,created_at) VALUES('task',NEW.id,strftime('%Y-%m-%dT%H:%M:%S+00:00','now')); END;
+        CREATE TABLE IF NOT EXISTS library_files(path TEXT PRIMARY KEY, root TEXT NOT NULL, mtime REAL NOT NULL, size INTEGER NOT NULL, chunks INTEGER NOT NULL DEFAULT 0, indexed_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS library_chunks(id INTEGER PRIMARY KEY, path TEXT NOT NULL, ordinal INTEGER NOT NULL, heading TEXT NOT NULL DEFAULT '', line INTEGER NOT NULL DEFAULT 0, text TEXT NOT NULL, content_hash TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS library_chunks_path ON library_chunks(path);
+        CREATE TABLE IF NOT EXISTS library_embeddings(chunk_id INTEGER PRIMARY KEY, model TEXT NOT NULL, content_hash TEXT NOT NULL, vector_json TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS answer_trace(message_id INTEGER PRIMARY KEY, user_text TEXT NOT NULL DEFAULT '', memory_ids TEXT NOT NULL DEFAULT '[]', library_refs TEXT NOT NULL DEFAULT '[]', entity_ids TEXT NOT NULL DEFAULT '[]', tools TEXT NOT NULL DEFAULT '[]', model TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT 'chat', created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS feedback(id INTEGER PRIMARY KEY, message_id INTEGER NOT NULL, rating INTEGER NOT NULL, reason TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
+        CREATE UNIQUE INDEX IF NOT EXISTS feedback_message ON feedback(message_id);
+        CREATE TABLE IF NOT EXISTS eval_runs(id INTEGER PRIMARY KEY, suite TEXT NOT NULL, summary_json TEXT NOT NULL, results_json TEXT NOT NULL, created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS openscad_designs(id INTEGER PRIMARY KEY, project_id INTEGER, title TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS openscad_versions(id INTEGER PRIMARY KEY, design_id INTEGER NOT NULL, version INTEGER NOT NULL, prompt TEXT NOT NULL DEFAULT '', source TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', mesh_name TEXT NOT NULL DEFAULT '', render_error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, UNIQUE(design_id,version), FOREIGN KEY(design_id) REFERENCES openscad_designs(id) ON DELETE CASCADE);
+        CREATE INDEX IF NOT EXISTS openscad_versions_design ON openscad_versions(design_id,version DESC);
+        CREATE TABLE IF NOT EXISTS openscad_drawings(id INTEGER PRIMARY KEY, version_id INTEGER NOT NULL UNIQUE, svg TEXT NOT NULL DEFAULT '', dimensions_json TEXT NOT NULL DEFAULT '{}', render_error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, FOREIGN KEY(version_id) REFERENCES openscad_versions(id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS schematic_designs(id INTEGER PRIMARY KEY, project_id INTEGER, title TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS schematic_versions(id INTEGER PRIMARY KEY, design_id INTEGER NOT NULL, version INTEGER NOT NULL, prompt TEXT NOT NULL DEFAULT '', spec_json TEXT NOT NULL, svg TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(design_id,version), FOREIGN KEY(design_id) REFERENCES schematic_designs(id) ON DELETE CASCADE);
+        CREATE INDEX IF NOT EXISTS schematic_versions_design ON schematic_versions(design_id,version DESC);
+        ''')
+        try:
+            c.execute('CREATE VIRTUAL TABLE IF NOT EXISTS library_fts USING fts5(heading, text, path UNINDEXED, chunk_id UNINDEXED)')
+        except sqlite3.OperationalError:
+            pass                       # this SQLite build has no FTS5: library.py falls back to a slower keyword scan
+        c.execute("CREATE TRIGGER IF NOT EXISTS chronicle_test AFTER INSERT ON engineering_doc_results BEGIN INSERT INTO chronicle_queue(source,row_id,created_at) VALUES('test',NEW.id,strftime('%Y-%m-%dT%H:%M:%S+00:00','now')); END")
 
 def rows(sql, args=()):
     with _lock, connection() as c:

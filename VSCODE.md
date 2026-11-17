@@ -94,5 +94,7 @@ models:
 ## Tips
 
 - After building the models, run the models once so they are loaded: the first request after a model has been unloaded takes several seconds.
-- Keep `sage-fast` loaded (`keep_alive` is 30 minutes) and, if memory allows, run Ollama with `OLLAMA_MAX_LOADED_MODELS=2` so inline suggestions are not
+- By default Sage keeps models loaded for 30 minutes. Set `SAGE_OLLAMA_KEEP_ALIVE=0` before starting Sage to unload each model after its request and reduce Ollama's RAM/VRAM use; requests will be slower because models must be loaded again.
+- Ollama does not expose a way to save/restore its KV tensors to an SSD or vector database. Sage already persists conversation messages and embedded memories in its local SQLite database, retrieves relevant saved context, and rebuilds the prompt after a model reload; the model has to process that prompt again.
+- If memory allows, run Ollama with `OLLAMA_MAX_LOADED_MODELS=2` so inline suggestions are not
   waiting for the coder or reasoning model to be swapped out.

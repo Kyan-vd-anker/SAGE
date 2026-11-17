@@ -10,10 +10,11 @@ WORKSPACE = Path(os.getenv("SAGE_WORKSPACE", DATA / "workspace"))
 PLUGIN_DIR = Path(os.getenv("SAGE_PLUGINS", ROOT / "plugins"))
 STATIC_DIR = Path(__file__).parent / "static"
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
+OLLAMA_KEEP_ALIVE = os.getenv("SAGE_OLLAMA_KEEP_ALIVE", "30m")  # set to 0 to unload each model after a request
 # One context window (num_ctx) for every chat lane, background job and the VS Code endpoints. Every request sends it, so Ollama never
-# reloads a model (and drops its prompt cache) because two callers asked for different sizes. 8192 leaves room for code in VS Code and
-# costs about 1 GB of KV cache on a 7B model; raise it (SAGE_NUM_CTX=32768) if VS Code still reports context_length_exceeded.
-NUM_CTX = max(2048, int(os.getenv("SAGE_NUM_CTX", "8192")))
+# reloads a model (and drops its prompt cache) because two callers asked for different sizes. 16384 leaves room for code in VS Code and
+# costs roughly 1 GB of KV cache on a classic 7B model (less on the hybrid-attention qwen3.5 models); raise it (SAGE_NUM_CTX=32768) if VS Code still reports context_length_exceeded.
+NUM_CTX = max(2048, int(os.getenv("SAGE_NUM_CTX", "16384")))
 # Three model lanes (see llm.model_for_request): fast = everyday replies, deep = code, tool calls and long input,
 # reasoning = math, physics and trade-off discussions. The old SAGE_MODEL and SAGE_CODING_MODEL names still work.
 FAST_MODEL = os.getenv("SAGE_FAST_MODEL", os.getenv("SAGE_MODEL", "qwen2.5:3b"))
@@ -22,7 +23,8 @@ MODEL = FAST_MODEL
 CODING_MODEL = DEEP_MODEL
 REASONING_MODEL = os.getenv("SAGE_REASONING_MODEL", "deepseek-r1:7b")  # math, physics and trade-off discussions
 ROUTER_LONG_INPUT_CHARS = int(os.getenv("SAGE_ROUTER_LONG_INPUT_CHARS", "1500"))  # longer messages go to the deep lane
-VISION_MODEL = os.getenv("SAGE_VISION_MODEL", "llava:7b")
+VISION_MODEL = os.getenv("SAGE_VISION_MODEL", "qwen3.5:9b")
+OPENSCAD_PATH = os.getenv("SAGE_OPENSCAD_PATH", "openscad")
 EMBED_MODEL = os.getenv("SAGE_EMBED_MODEL", "nomic-embed-text")
 HOST = os.getenv("SAGE_HOST", "127.0.0.1")
 PORT = int(os.getenv("SAGE_PORT", "8000"))
@@ -67,6 +69,13 @@ CORE_PROFILE_CHARS = int(os.getenv("SAGE_CORE_PROFILE_CHARS", "1400"))          
 CORE_PROFILE_VOICE_CHARS = int(os.getenv("SAGE_CORE_PROFILE_VOICE_CHARS", "450"))   # the smaller block used for voice and small talk
 CAPTURE_ENABLED = _flag("SAGE_MEMORY_CAPTURE", True)                                 # idle-time LLM extraction of memories, entities and relations after a reply
 PROJECT_STATE_ENABLED = _flag("SAGE_PROJECT_STATE", True)                            # idle-time "state of play" summaries per project
+# Library (library.py): Sage's index of the user's own files. SAGE_LIBRARY_ROOTS lists folders (Obsidian vault, notes, datasheets), separated by ";".
+# SAGE_REPO_ROOTS lists git repositories: their README and code are indexed too and new commits are logged as events (chronicle.py).
+LIBRARY_ENABLED = _flag("SAGE_LIBRARY", True)
+LIBRARY_ROOTS = os.getenv("SAGE_LIBRARY_ROOTS", "")
+REPO_ROOTS = os.getenv("SAGE_REPO_ROOTS", str(ROOT))                                # default: Sage's own repository
+LIBRARY_AUTO_CHUNKS = int(os.getenv("SAGE_LIBRARY_AUTO_CHUNKS", "2"))              # excerpts added to a prompt when the message asks about the user's own files
+CHRONICLE_ENABLED = _flag("SAGE_CHRONICLE", True)                                    # log task, workshop, print, test and commit events as episodic memories
 HA_TOKEN = os.getenv("SAGE_HA_TOKEN", "")
 SHORTCUT_TOKEN = os.getenv("SAGE_SHORTCUT_TOKEN", "")
 TELEGRAM_BOT_TOKEN = os.getenv("SAGE_TELEGRAM_BOT_TOKEN", "")

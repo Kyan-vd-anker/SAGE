@@ -1,0 +1,74 @@
+{
+  "suite": "fixture",
+  "description": "Deterministic retrieval checks against a small invented workshop: memories, entities, files and logged events. Run with: python -m sage.evals run",
+  "fixture": {
+    "entities": [
+      {"name": "ROV", "kind": "project", "description": "Underwater vehicle build", "aliases": ["the rov", "underwater vehicle"],
+       "relations": [{"rel": "uses", "to": "Arduino Nano", "kind": "device"}]},
+      {"name": "PHYSIX", "kind": "project", "description": "Browser-based physics simulator", "aliases": ["physix simulator"]},
+      {"name": "HexVault", "kind": "project", "description": "3D printing product line on Etsy"},
+      {"name": "Ender 3", "kind": "device", "aliases": ["the ender"]}
+    ],
+    "memories": [
+      {"text": "The user's name is Kyan", "kind": "fact", "tier": "core", "importance": 5},
+      {"text": "User always wants spoken answers to be short", "kind": "preference", "tier": "core", "importance": 4},
+      {"text": "The ROV control board is an Arduino Nano and a second Nano reads the sensors", "entities": ["ROV"]},
+      {"text": "The ROV tether uses RS485 between the surface box and the vehicle", "entities": ["ROV"]},
+      {"text": "Propulsion on the ROV is four Blue Robotics T200 thrusters", "entities": ["ROV"]},
+      {"text": "PHYSIX is a browser-based physics simulator and the flagship of SimVerse Lab", "entities": ["PHYSIX"]},
+      {"text": "SimVerse Lab is hosted on Strato and the domain is simverselab.com"},
+      {"text": "HexVault is a 3D printing product line sold on Etsy", "entities": ["HexVault"]},
+      {"text": "The Ender 3 printer needs a 60 degree bed for PETG and 80 degrees for ABS", "entities": ["Ender 3"]},
+      {"text": "The home lab is a 15 square metre room that doubles as a workshop"},
+      {"text": "Heat exchanger assignment 6BPR02 cools ethanol with river water in a shell and tube design"},
+      {"text": "The Nanomaterials exam 6E12X0 covers nanoparticle synthesis and characterization"},
+      {"text": "The user's favourite programming language is Python"},
+      {"text": "Daily summary 2026-11-10: decided on RS485 for the ROV tether and ordered the T200 thrusters", "kind": "daily_summary", "age_days": 7},
+      {"text": "The ROV depth sensor wiring is in progress on the bench", "tier": "working", "entities": ["ROV"]},
+      {"text": "Sage runs on a laptop with 16GB RAM", "age_days": 40},
+      {"text": "Sage runs on a Ryzen 5600X desktop with 16GB RAM"}
+    ],
+    "files": {
+      "rov/README.md": "# ROV\n\nUnderwater vehicle with two Arduino Nano boards.\n\n## Wiring\n\nThe depth sensor (MS5837) connects to the sensor Nano on pins A4 and A5 over I2C. Power it from 3.3V.\napi_key = SHOULD_NOT_BE_INDEXED\n\n## Tether\n\nRS485 over Cat6 cable with a 120 ohm termination resistor at both ends.\n",
+      "notes/printing.md": "# Printing notes\n\n## PETG\n\nBed 60C, nozzle 235C, part fan 40 percent. Dry the filament first.\n\n## ABS\n\nBed 80C, nozzle 250C, no fan, use an enclosure.\n",
+      "firmware/depth.ino": "#include <Wire.h>\n\nvoid setup() {\n  Wire.begin();\n}\n\nvoid readDepth() {\n  // read the MS5837 over I2C and convert the pressure to metres\n}\n",
+      "notes/secret-keys.md": "# Keys\n\nhunter2 is the router password\n"
+    },
+    "events": [
+      {"source": "workshop", "note": "Thruster test: all four T200 thrusters spin up at 40 percent duty without noise"},
+      {"source": "decision", "title": "ROV tether protocol", "decision": "Use RS485", "why": "Long cable runs and noise immunity"},
+      {"source": "failure", "title": "Tether noise", "symptom": "Garbled RS485 frames over 20 metres", "cause": "No termination", "fix": "Added 120 ohm resistors at both ends", "lesson": "Always terminate RS485"}
+    ]
+  },
+  "cases": [
+    {"id": "rov-board", "type": "retrieval", "query": "What board controls the ROV?", "expect_any": ["Arduino Nano"], "tags": ["retrieval", "entity"]},
+    {"id": "rov-tether", "type": "retrieval", "query": "which tether protocol does the ROV use", "expect_any": ["RS485"], "tags": ["retrieval", "entity"]},
+    {"id": "rov-thrusters", "type": "retrieval", "query": "how many thrusters are on the ROV", "expect_any": ["T200"], "tags": ["retrieval", "entity"]},
+    {"id": "physix", "type": "retrieval", "query": "What is PHYSIX?", "expect_any": ["physics simulator"], "tags": ["retrieval"]},
+    {"id": "simverse-hosting", "type": "retrieval", "query": "where is simverselab hosted", "expect_any": ["Strato"], "tags": ["retrieval"]},
+    {"id": "petg-bed", "type": "retrieval", "query": "bed temperature for PETG on the Ender", "expect_any": ["60 degree"], "tags": ["retrieval", "entity"]},
+    {"id": "hexvault", "type": "retrieval", "query": "what is HexVault", "expect_any": ["Etsy"], "tags": ["retrieval"]},
+    {"id": "hx-assignment", "type": "retrieval", "query": "what is the 6BPR02 assignment about", "expect_any": ["ethanol"], "tags": ["retrieval"]},
+    {"id": "nano-exam", "type": "retrieval", "query": "what does the nanomaterials exam cover", "expect_any": ["nanoparticle"], "tags": ["retrieval"]},
+    {"id": "entity-only", "type": "retrieval", "query": "how is the rov going", "expect_any": ["Arduino Nano", "RS485", "T200", "depth sensor"], "tags": ["entity"]},
+    {"id": "supersede-current", "type": "retrieval", "query": "what computer does Sage run on", "expect_any": ["5600X"], "absent": ["laptop"], "tags": ["supersede"]},
+    {"id": "supersede-history", "type": "recall", "query": "what did Sage run on before", "include_history": true, "expect_any": ["laptop"], "tags": ["supersede"]},
+    {"id": "episodic-with-cue", "type": "retrieval", "query": "what did we decide last week about the RS485 tether", "expect_any": ["decided on RS485"], "tags": ["episodic"]},
+    {"id": "episodic-hidden", "type": "retrieval", "query": "which tether does the ROV use for RS485", "expect_any": ["RS485"], "absent": ["Daily summary"], "tags": ["episodic", "precision"]},
+    {"id": "no-answer-swallow", "type": "no_answer", "query": "what is the airspeed velocity of an unladen swallow", "tags": ["precision"]},
+    {"id": "no-answer-pasta", "type": "no_answer", "query": "recommend a good pasta recipe", "tags": ["precision"]},
+    {"id": "core-block", "type": "core", "expect_any": ["name is Kyan", "spoken answers to be short"], "absent": ["Etsy"], "tags": ["core"]},
+    {"id": "working-note", "type": "recall", "query": "ROV depth sensor", "tier": "working", "expect_any": ["depth sensor wiring"], "tags": ["tiers"]},
+    {"id": "decision-recall", "type": "recall", "query": "which protocol did we decide for the ROV tether", "expect_any": ["Use RS485"], "tags": ["events", "recall"]},
+    {"id": "failure-recall", "type": "recall", "query": "tether noise failure", "expect_any": ["120 ohm"], "tags": ["events", "recall"]},
+    {"id": "event-time-cue", "type": "retrieval", "query": "what did I do yesterday with the thrusters", "expect_any": ["Thruster test"], "tags": ["events", "episodic"]},
+    {"id": "library-pins", "type": "library", "query": "which pins does the depth sensor use", "expect_file": "rov/README.md", "tags": ["library"]},
+    {"id": "library-termination", "type": "library", "query": "termination resistor for the tether", "expect_file": "rov/README.md", "tags": ["library"]},
+    {"id": "library-petg", "type": "library", "query": "PETG nozzle temperature", "expect_file": "notes/printing.md", "tags": ["library"]},
+    {"id": "library-code", "type": "library", "query": "readDepth function", "expect_file": "firmware/depth.ino", "tags": ["library"]},
+    {"id": "library-secret-line", "type": "library_none", "query": "SHOULD_NOT_BE_INDEXED", "absent": ["SHOULD_NOT_BE_INDEXED"], "tags": ["library", "privacy"]},
+    {"id": "library-secret-file", "type": "library_none", "query": "hunter2 router password", "absent": ["hunter2"], "tags": ["library", "privacy"]},
+    {"id": "answer-board", "type": "answer", "question": "What board controls the ROV?", "expect_regex": ["(?i)nano"], "tags": ["answer"]},
+    {"id": "answer-hosting", "type": "answer", "question": "Where is simverselab hosted?", "expect_regex": ["(?i)strato"], "tags": ["answer"]}
+  ]
+}

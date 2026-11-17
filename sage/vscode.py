@@ -266,7 +266,7 @@ def _chat_request(body):
     stop = body.get('stop')
     if stop:
         options['stop'] = [stop] if isinstance(stop, str) else [str(s) for s in stop][:4]
-    upstream = {'model': model, 'messages': messages, 'stream': True, 'keep_alive': '30m', 'think': think, 'options': options}
+    upstream = {'model': model, 'messages': messages, 'stream': True, 'keep_alive': config.OLLAMA_KEEP_ALIVE, 'think': think, 'options': options}
     if tools:
         upstream['tools'] = tools
     return lane, upstream
@@ -455,7 +455,7 @@ def inline_complete(prefix, suffix='', language='', path='', max_tokens=128, tem
         if stops:
             options['stop'] = stops
         if _supports_insert(model):
-            body = {'model': model, 'prompt': prefix, 'suffix': suffix, 'stream': True, 'keep_alive': '30m', 'think': False, 'options': options}
+            body = {'model': model, 'prompt': prefix, 'suffix': suffix, 'stream': True, 'keep_alive': config.OLLAMA_KEEP_ALIVE, 'think': False, 'options': options}
             try:
                 parts = []
                 for event in events('/api/generate', body, cancel):
@@ -472,7 +472,7 @@ def inline_complete(prefix, suffix='', language='', path='', max_tokens=128, tem
                 raise _upstream_failure(exc)
         if method is None and not cancel.is_set():
             where = f'File: {path or "untitled"}' + (f' ({language})' if language else '')
-            body = {'model': model, 'stream': True, 'keep_alive': '30m', 'think': False, 'options': options,
+            body = {'model': model, 'stream': True, 'keep_alive': config.OLLAMA_KEEP_ALIVE, 'think': False, 'options': options,
                     'messages': [{'role': 'system', 'content': INLINE_SYSTEM},
                                  {'role': 'user', 'content': f'{where}\n\n{prefix}<CURSOR>{suffix}'}]}
             try:
@@ -536,7 +536,7 @@ def embeddings(body):
     if not isinstance(items, list) or not items or not all(isinstance(i, str) for i in items) or len(items) > 256:
         raise ApiError(400, '`input` must be a string or a list of up to 256 strings')
     try:
-        data = _post_json('/api/embed', {'model': config.EMBED_MODEL, 'input': [i[:8000] for i in items], 'keep_alive': '30m'}, timeout=120)
+        data = _post_json('/api/embed', {'model': config.EMBED_MODEL, 'input': [i[:8000] for i in items], 'keep_alive': config.OLLAMA_KEEP_ALIVE}, timeout=120)
     except Exception as exc:
         raise _upstream_failure(exc)
     vectors = data.get('embeddings') or []

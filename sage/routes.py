@@ -3,7 +3,7 @@ server.py calls get()/post() first; they return (handled, value). Errors are rai
 import re
 from urllib.parse import parse_qs
 
-from . import db, events, memory, planner, reminders, scheduler, studio
+from . import db, events, memory, openscad, planner, reminders, scheduler, schematic, studio
 
 NOT_HANDLED = (False, None)
 
@@ -20,6 +20,10 @@ def get(path, query):
     q = lambda key, default='': (query.get(key) or [default])[0]
     if path.startswith('/api/studio/'):
         return studio.route_get(path, q)
+    if path.startswith('/api/openscad/'):
+        return openscad.route_get(path, q)
+    if path.startswith('/api/schematics/'):
+        return schematic.route_get(path, q)
     if path == '/api/events':
         if q('since') == '':
             items = events.recent(0, 30)
@@ -54,6 +58,10 @@ def get(path, query):
 def post(path, body):
     if path.startswith('/api/studio/'):
         return studio.route_post(path, body)
+    if path.startswith('/api/openscad/'):
+        return openscad.route_post(path, body)
+    if path.startswith('/api/schematics/'):
+        return schematic.route_post(path, body)
     if path == '/api/shortcuts/awake':
         return True, scheduler.action_awake_brief()
     if path == '/api/plan/approve-blocked':

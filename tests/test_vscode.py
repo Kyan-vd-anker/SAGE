@@ -87,6 +87,13 @@ class LaneTests(Base):
         self.assertEqual([b['think'] for b in fake.bodies('/api/chat')], [False, False, True])
         self.assertEqual([b['model'] for b in fake.bodies('/api/chat')], ['local/sage-fast', 'local/sage-coder', 'local/sage-reason'])
 
+    def test_ollama_keep_alive_setting_is_forwarded_to_chat_requests(self):
+        fake = self.fake({'/api/chat': lambda body: chat_events('ok')})
+        with patch.object(config, 'OLLAMA_KEEP_ALIVE', '0'):
+            vscode.handle('POST', '/v1/chat/completions',
+                          {'messages': [{'role': 'user', 'content': 'hi'}]}, 'c')
+        self.assertEqual(fake.bodies('/api/chat')[0]['keep_alive'], '0')
+
     def test_a_model_that_does_not_know_the_think_option_is_asked_again_without_it(self):
         calls = []
 

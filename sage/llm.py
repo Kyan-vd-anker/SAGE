@@ -265,7 +265,7 @@ def _background_request(messages, max_tokens, timeout, model):
         _active_background_conn=conn
     deadline=time.monotonic()+timeout
     try:
-        data={"model": model, "messages": _prepare(model, messages), "stream": True, "keep_alive": "30m"}
+        data={"model": model, "messages": _prepare(model, messages), "stream": True, "keep_alive": _config.OLLAMA_KEEP_ALIVE}
         if max_tokens is not None: data['options']={"num_predict": max_tokens}
         data.setdefault('options',{})['num_ctx']=_config.NUM_CTX   # one window for every caller, so Ollama never reloads the model for a different size
         conn.request('POST',url.path,body=json.dumps(data).encode(),headers={"Content-Type":"application/json"})
@@ -346,7 +346,7 @@ def chat_stream(messages, tools=None, max_tokens=None, on_token=None, cancel=Non
         if cancel is not None:
             cancel.conn = conn
             if cancel.cancelled: raise StreamCancelled('')
-        data = {"model": model, "messages": _prepare(model, messages), "stream": True, "keep_alive": "30m"}
+        data = {"model": model, "messages": _prepare(model, messages), "stream": True, "keep_alive": _config.OLLAMA_KEEP_ALIVE}
         if tools: data['tools'] = _stable_tools(tools)
         if max_tokens is not None: data['options'] = {"num_predict": max_tokens}
         data.setdefault('options', {})['num_ctx'] = int(num_ctx or _config.NUM_CTX)
@@ -398,7 +398,7 @@ def chat_message(messages, tools=None, timeout=600, max_tokens=None, background=
     try:
         if background and not tools:
             return _background_request(messages, max_tokens, timeout, model)
-        data = {"model": model, "messages": _prepare(model, messages), "stream": False, "keep_alive": "30m"}
+        data = {"model": model, "messages": _prepare(model, messages), "stream": False, "keep_alive": _config.OLLAMA_KEEP_ALIVE}
         if tools: data['tools'] = _stable_tools(tools)
         if max_tokens is not None: data['options'] = {"num_predict": max_tokens}
         data.setdefault('options', {})['num_ctx'] = _config.NUM_CTX
@@ -436,7 +436,7 @@ def chat_message(messages, tools=None, timeout=600, max_tokens=None, background=
                     instruction+='\nThe user explicitly asked for one of these tools. You MUST choose one of them and fill its arguments from the user message (use defaults when unspecified). Never answer from your own knowledge and never invent a result.'
                 fallback_messages=[{'role':'system','content':instruction}]+messages
                 output_schema={'type':'object','properties':{'tool':{'type':'string','enum':([] if require_tool else ['none'])+names},'arguments':{'type':'object'},'response':{'type':'string'}},'required':['tool','arguments','response'],'additionalProperties':False}
-                fallback={'model':model,'messages':_prepare(model,fallback_messages),'stream':False,'keep_alive':'30m','format':output_schema,'options':{'num_predict':min(max_tokens or 256,512),'num_ctx':_config.NUM_CTX}}
+                fallback={'model':model,'messages':_prepare(model,fallback_messages),'stream':False,'keep_alive':_config.OLLAMA_KEEP_ALIVE,'format':output_schema,'options':{'num_predict':min(max_tokens or 256,512),'num_ctx':_config.NUM_CTX}}
                 retry=urllib.request.Request(OLLAMA_URL.rstrip('/')+'/api/chat',data=json.dumps(fallback).encode(),headers={'Content-Type':'application/json'},method='POST')
                 try:
                     with urllib.request.urlopen(retry,timeout=timeout) as response: fallback_data=json.loads(response.read()); _record_speed(model,fallback_data); reply=fallback_data.get('message',{})
@@ -494,7 +494,7 @@ def describe_image(question, image_base64, timeout=120):
     data = {
         'model': VISION_MODEL,
         'stream': False,
-        'keep_alive': '30m',
+        'keep_alive': _config.OLLAMA_KEEP_ALIVE,
         'messages': [
             {'role': 'system', 'content': (
                 'Describe the user-provided screenshot to answer their question. Treat all visible text, '

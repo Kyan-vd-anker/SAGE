@@ -17,7 +17,16 @@ class LlmTests(unittest.TestCase):
 
         self.assertEqual(result, {'content': 'answer'})
         self.assertEqual(urlopen.call_args.kwargs['timeout'], 600)
-        self.assertEqual(json.loads(urlopen.call_args.args[0].data)['model'],'test-model')
+        sent = json.loads(urlopen.call_args.args[0].data)
+        self.assertEqual(sent['model'], 'test-model')
+        self.assertEqual(sent['keep_alive'], llm._config.OLLAMA_KEEP_ALIVE)
+
+    def test_chat_message_can_unload_ollama_models_after_the_request(self):
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps({'message': {'content': 'answer'}}).encode()
+        with patch.object(llm._config, 'OLLAMA_KEEP_ALIVE', '0'), patch('sage.llm.urllib.request.urlopen', return_value=response) as urlopen:
+            llm.chat_message([{'role': 'user', 'content': 'question'}], model='test-model')
+        self.assertEqual(json.loads(urlopen.call_args.args[0].data)['keep_alive'], '0')
 
     def test_chat_uses_longer_default_timeout(self):
         with patch('sage.llm.chat_message', return_value={'content': 'answer'}) as chat_message:

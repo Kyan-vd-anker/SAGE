@@ -96,7 +96,7 @@ def _index():
     with _idx_lock:
         if _IDX['key'] == key:
             return _IDX['rows']
-    rows = db.rows("SELECT id,content,kind,tier,confidence,importance,pinned,use_count,updated_at,project_id,expires_at "
+    rows = db.rows("SELECT id,content,kind,tier,confidence,importance,pinned,use_count,updated_at,project_id,expires_at,feedback_score "
                    "FROM memories WHERE status='active' ORDER BY updated_at DESC LIMIT 800")
     for row in rows:
         row['kw'] = keywords(row['content'])
@@ -133,13 +133,15 @@ def _supersede(old_id, new_id, stamp):
 
 
 def save(content, kind='fact', source='conversation', confidence=0.8, importance=None, status='active', quiet=False,
-         tier=None, project_id=None, entity_names=None, supersedes=None, expires_days=None):
+         tier=None, project_id=None, entity_names=None, supersedes=None, expires_days=None, distinct=False):
     """Save a memory. Returns its id (a near-duplicate returns the id of the note it matched).
 
     tier          one of TIERS (default: from `kind`)
     entity_names  names (or {name, kind, description, aliases} dicts) of the entities this note is about; known entities mentioned
                   in the text are linked automatically
     supersedes    id of an active memory this one replaces; with status='suggested' it only proposes the change until approved
+    distinct      this is a separate event, never an update of a similar older note (used for logged events: two prints of the
+                  same file on different days are two memories, not one superseding the other)
     """
     content = ' '.join(str(content).split()).strip()
     if not content:
@@ -163,7 +165,7 @@ def save(content, kind='fact', source='conversation', confidence=0.8, importance
                    (kind, source, confidence, keep_importance, new_status, tier or row['tier'], stamp, row['id']))
         mid = row['id']
     else:
-        if old is None:
+        if old is None and not distinct:
             near = _find_near(content, keywords(content))
             if near:
                 row, relation = near
@@ -409,6 +411,39 @@ def _entity_memory_ids(entity_ids):
     return {r['memory_id'] for r in db.rows(f'SELECT memory_id FROM memory_entities WHERE entity_id IN ({marks})', tuple(ids))}
 
 
+# ------------------------------------------------------------------ retrieval weights
+
+DEFAULT_WEIGHTS = {'entity': 0.30, 'sem_mix': 0.5, 'importance': 0.04, 'recency': 0.08, 'use': 0.015, 'feedback': 0.03}
+_W = {'at': 0.0, 'db': None, 'value': dict(DEFAULT_WEIGHTS), 'override': None}
+
+
+def weights():
+    """The ranking weights used by relevant(): the defaults, plus any tuned values stored in the settings table (key
+    'retrieval_weights', written by evals.tune). Cached for a minute."""
+    if _W['override'] is not None:
+        return _W['override']
+    now = time.time()
+    if _W['db'] == str(config.DB_PATH) and now - _W['at'] < 60:
+        return _W['value']
+    value = dict(DEFAULT_WEIGHTS)
+    try:
+        for key, item in json.loads(_setting('retrieval_weights', '') or '{}').items():
+            if key in value and isinstance(item, (int, float)) and math.isfinite(item):
+                value[key] = float(item)
+    except (ValueError, TypeError, AttributeError):
+        pass
+    _W.update(at=now, db=str(config.DB_PATH), value=value)
+    return value
+
+
+def set_weights(values):
+    """Store tuned weights (unknown keys are ignored) and apply them straight away."""
+    clean = {k: round(float(v), 4) for k, v in (values or {}).items() if k in DEFAULT_WEIGHTS}
+    _set_setting('retrieval_weights', json.dumps(clean))
+    _W['at'] = 0.0
+    return clean
+
+
 def relevant(text, limit=2, track=True, semantic=True, entity_ids=None, exclude_ids=(), allow_episodic=None):
     """Return only a small set of memories with strong relevance to this specific request.
 
@@ -436,22 +471,23 @@ def relevant(text, limit=2, track=True, semantic=True, entity_ids=None, exclude_
     linked = _entity_memory_ids(entity_ids)
     semantic_scores = _semantic_scores(text, rows) if (semantic and (wanted or text.strip())) else {}
     scored = []
+    w = weights()
     for r in rows:
         overlap = wanted & kw[r['id']]
-        keyword_score = sum(idf[w] for w in overlap) / total_idf if wanted else 0.0
+        keyword_score = sum(idf[w_] for w_ in overlap) / total_idf if wanted else 0.0
         if semantic_scores:
             sim = semantic_scores.get(r['id'])
             sem_score = max(0.0, (sim - 0.35) / 0.65) if sim is not None else 0.0
-            base = 0.5 * keyword_score + 0.5 * sem_score if sim is not None else keyword_score
+            base = (1 - w['sem_mix']) * keyword_score + w['sem_mix'] * sem_score if sim is not None else keyword_score
         else:
             base = keyword_score
         try:
             age_days = max(0.0, (now - datetime.fromisoformat(r['updated_at'])).total_seconds() / 86400)
         except ValueError:
             age_days = 90.0
-        entity_bonus = 0.30 if r['id'] in linked else 0.0
-        score = (base + entity_bonus + 0.04 * (int(r['importance'] or 3) - 3) + 0.08 * math.exp(-age_days / 60)
-                 + 0.015 * min(int(r['use_count'] or 0), 6))
+        entity_bonus = w['entity'] if r['id'] in linked else 0.0
+        score = (base + entity_bonus + w['importance'] * (int(r['importance'] or 3) - 3) + w['recency'] * math.exp(-age_days / 60)
+                 + w['use'] * min(int(r['use_count'] or 0), 6) + w['feedback'] * max(-3, min(3, int(r.get('feedback_score') or 0))))
         scored.append((score, base, r))
     chosen = []
     for score, base, r in sorted(scored, key=lambda x: x[0], reverse=True):
