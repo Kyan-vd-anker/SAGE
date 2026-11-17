@@ -1,7 +1,9 @@
 from io import BytesIO
 import json
+import tempfile
 from urllib.error import HTTPError
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from sage import llm
@@ -58,6 +60,57 @@ class LlmTests(unittest.TestCase):
             llm.chat_message([{'role': 'user', 'content': 'question'}], model='test-model')
         self.assertEqual(json.loads(urlopen.call_args.args[0].data)['keep_alive'], '0')
 
+    def test_llamacpp_chat_message_persists_the_server_slot_snapshot(self):
+        chat_response = MagicMock()
+        chat_response.__enter__.return_value.read.return_value = json.dumps({
+            'choices': [{'message': {'content': 'answer'}}],
+            'usage': {'prompt_tokens': 40, 'completion_tokens': 2},
+            'timings': {'cache_n': 20, 'prompt_ms': 10, 'predicted_ms': 5},
+        }).encode()
+        save_response = MagicMock()
+        save_response.__enter__.return_value.read.return_value = b'{"n_saved": 40}'
+        captured = []
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.object(llm._config, 'LLM_BACKEND', 'llama_cpp'), \
+                patch.object(llm._config, 'LLAMA_CPP_CACHE_DIR', Path(tmp)), \
+                patch.object(llm.llamacpp, '_cache_restore_attempted', False), \
+                patch('sage.llm.urllib.request.urlopen', side_effect=[chat_response, save_response]) as urlopen:
+            reply = llm.chat_message([{'role': 'user', 'content': 'question'}], model=llm.MODEL, on_request=captured.append)
+
+        calls = urlopen.call_args_list
+        body = json.loads(calls[0].args[0].data)
+        self.assertEqual(reply['content'], 'answer')
+        self.assertEqual(body['model'], llm._config.LLAMA_CPP_MODEL)
+        self.assertEqual(body['id_slot'], llm._config.LLAMA_CPP_SLOT)
+        self.assertIn('/v1/chat/completions', calls[0].args[0].full_url)
+        self.assertIn('/slots/0?action=save', calls[1].args[0].full_url)
+        self.assertEqual(captured, [body])
+
+    def test_llamacpp_stream_parses_sse_and_can_skip_disk_persistence(self):
+        response = MagicMock()
+        response.status = 200
+        response.__iter__.return_value = [
+            b'data: {"choices":[{"delta":{"content":"answer"}}]}\n',
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"search_memory","arguments":"{\\"query\\":\\"x\\"}"}}]}}]}\n',
+            b'data: {"choices":[],"usage":{"prompt_tokens":80,"completion_tokens":4},"timings":{"cache_n":40,"prompt_ms":20,"predicted_ms":10}}\n',
+            b'data: [DONE]\n',
+        ]
+        conn = MagicMock()
+        conn.getresponse.return_value = response
+        captured = []
+        with patch.object(llm._config, 'LLM_BACKEND', 'llama_cpp'), \
+                patch('sage.llm.http.client.HTTPConnection', return_value=conn), \
+                patch('sage.llm.urllib.request.urlopen') as urlopen:
+            reply = llm.chat_stream([{'role': 'user', 'content': 'question'}], model=llm.MODEL,
+                                    on_request=captured.append, cache_session=False)
+
+        body = json.loads(conn.request.call_args.kwargs['body'])
+        self.assertEqual(reply['content'], 'answer')
+        self.assertEqual(reply['tool_calls'][0]['function']['name'], 'search_memory')
+        self.assertEqual(reply['_prompt_tokens'], 80)
+        self.assertEqual(captured, [body])
+        urlopen.assert_not_called()
+
     def test_chat_uses_longer_default_timeout(self):
         with patch('sage.llm.chat_message', return_value={'content': 'answer'}) as chat_message:
             result = llm.chat([{'role': 'user', 'content': 'question'}])
@@ -87,6 +140,64 @@ class LlmTests(unittest.TestCase):
             llm.chat_stream([{'role': 'user', 'content': 'question'}], model='test-model', on_request=captured.append)
         sent = json.loads(conn.request.call_args.kwargs['body'])
         self.assertEqual(captured, [sent])
+
+    def test_chat_stream_retries_without_think_when_model_rejects_the_option(self):
+        rejected = MagicMock()
+        rejected.status = 400
+        rejected.read.return_value = b'{"error":"model does not support think"}'
+        accepted = MagicMock()
+        accepted.status = 200
+        accepted.__iter__.return_value = [b'{"message":{"content":"hey"},"done":true}\n']
+        connections = [MagicMock(), MagicMock()]
+        connections[0].getresponse.return_value = rejected
+        connections[1].getresponse.return_value = accepted
+        captured = []
+
+        with patch.object(llm._config, 'FAST_THINK', False), \
+                patch('sage.llm.http.client.HTTPConnection', side_effect=connections):
+            reply = llm.chat_stream([{'role': 'user', 'content': 'hey'}], model=llm.MODEL,
+                                    on_request=captured.append)
+
+        bodies = [json.loads(conn.request.call_args.kwargs['body']) for conn in connections]
+        self.assertEqual(reply['content'], 'hey')
+        self.assertIs(bodies[0]['think'], False)
+        self.assertNotIn('think', bodies[1])
+        self.assertEqual(captured, bodies)
+
+    def test_chat_message_retries_without_think_when_model_rejects_the_option(self):
+        unsupported = HTTPError('http://localhost/api/chat', 400, 'unsupported', None,
+                                BytesIO(b'model does not support think'))
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps(
+            {'message': {'content': 'hey'}}
+        ).encode()
+        captured = []
+
+        with patch.object(llm._config, 'FAST_THINK', False), \
+                patch('sage.llm.urllib.request.urlopen', side_effect=[unsupported, response]) as urlopen:
+            reply = llm.chat_message([{'role': 'user', 'content': 'hey'}], model=llm.MODEL,
+                                     on_request=captured.append)
+
+        bodies = [json.loads(call.args[0].data) for call in urlopen.call_args_list]
+        self.assertEqual(reply['content'], 'hey')
+        self.assertIs(bodies[0]['think'], False)
+        self.assertNotIn('think', bodies[1])
+        self.assertEqual(captured, bodies)
+
+    def test_chat_stream_reserves_output_tokens_when_thinking_is_enabled(self):
+        response = MagicMock()
+        response.status = 200
+        response.__iter__.return_value = [b'{"message":{"content":"answer"},"done":true}\n']
+        conn = MagicMock()
+        conn.getresponse.return_value = response
+
+        with patch.object(llm._config, 'REASONING_THINK', True), \
+                patch('sage.llm.http.client.HTTPConnection', return_value=conn):
+            llm.chat_stream([{'role': 'user', 'content': 'question'}], max_tokens=700, model=llm.REASONING_MODEL)
+
+        body = json.loads(conn.request.call_args.kwargs['body'])
+        self.assertIs(body['think'], True)
+        self.assertEqual(body['options']['num_predict'], 2048)
 
     def test_model_for_request_selects_coder_for_code_and_default_for_other_requests(self):
         self.assertEqual(llm.model_for_request('Write a Python function to add two numbers.'),llm.CODING_MODEL)

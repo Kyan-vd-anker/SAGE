@@ -20,6 +20,60 @@ Set `SAGE_PASSWORD` (put it in the git-ignored `start-sage.local.bat`, or the sy
 
 Sage uses three Ollama models. The **fast lane** (`qwen2.5:3b`, `SAGE_FAST_MODEL`) answers greetings, simple questions, clarifications and confirmations. The **deep lane** (`qwen2.5-coder:7b`, `SAGE_DEEP_MODEL`) takes code, tool calls, messages over `SAGE_ROUTER_LONG_INPUT_CHARS` (1500) characters and background planning or research. The **reasoning lane** (`deepseek-r1:7b`, `SAGE_REASONING_MODEL`) takes math, physics and trade-off discussions. Pull them with `ollama pull qwen2.5:3b`, `ollama pull qwen2.5-coder:7b` and `ollama pull deepseek-r1:7b`. The old `SAGE_MODEL` and `SAGE_CODING_MODEL` names still work and override the defaults.
 
+Interactive chat and VS Code requests use the lane settings `SAGE_THINK_FAST` (off by default), `SAGE_THINK_DEEP` (off), and `SAGE_THINK_REASONING` (on). Thinking-enabled requests reserve at least 2,048 output tokens when a caller sets a smaller limit, leaving room for the final answer. If an Ollama model rejects the `think` option, Sage retries without it. Set `SAGE_THINK_FAST=0` in the Sage service environment to keep greetings and simple chat direct.
+
+### llama.cpp disk-backed prompt snapshots (optional)
+
+Ollama remains the default backend. To use llama.cpp, Sage can send chat and tool requests to one local `llama-server` model and persist that server slot's exact KV/prompt state as `data/kv-cache/sage-session.bin`. The server must use `--slot-save-path` pointing to the same directory; Sage restores the file on startup and saves it after successful foreground replies. This is a whole-slot session snapshot, not independently reusable KV for each saved fact, and it does not increase the model's actual context limit. The snapshot can contain private prompt-derived state; the launcher creates its directory with owner-only permissions.
+
+In llama.cpp mode, semantic-memory capture and retrieval are off by default. Existing SQLite records are not deleted. Sage instead includes up to 12 recent chat exchanges by default so the saved slot can continue the same prompt; adjust this with `SAGE_CHAT_TURNS` and `SAGE_CHAT_HISTORY_CHARS`. Document-Q&A calls do not write their content to the persistent slot snapshot.
+
+On Kali, build a CPU-capable `llama-server` and obtain a compatible GGUF model. A CPU build can be made with:
+
+```
+sudo apt install -y git cmake build-essential
+git clone --depth 1 https://github.com/ggml-org/llama.cpp.git ~/llama.cpp
+cmake -S ~/llama.cpp -B ~/llama.cpp/build -DCMAKE_BUILD_TYPE=Release
+cmake --build ~/llama.cpp/build --config Release -j6 --target llama-server
+```
+
+Create `~/.config/sage/llama.env` containing the model path, for example:
+
+```
+SAGE_LLAMA_CPP_MODEL_PATH=/home/kyan/models/qwen3.5-4b-q4_k_m.gguf
+SAGE_LLAMA_CPP_SERVER_BIN=/home/kyan/llama.cpp/build/bin/llama-server
+SAGE_NUM_CTX=65536
+SAGE_LLAMA_CPP_THREADS=6
+```
+
+Install and start the provided user service:
+
+```
+mkdir -p ~/.config/systemd/user ~/.config/sage
+cp ~/SAGE/scripts/sage-llama-server.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now sage-llama-server.service
+```
+
+Then configure Sage with `systemctl --user edit sage.service`:
+
+```
+[Unit]
+Requires=sage-llama-server.service
+After=sage-llama-server.service
+
+[Service]
+Environment=SAGE_LLM_BACKEND=llama_cpp
+Environment=SAGE_LLAMA_CPP_URL=http://127.0.0.1:8080
+Environment=SAGE_LLAMA_CPP_MODEL=sage
+Environment=SAGE_LLAMA_CPP_CACHE_DIR=/home/kyan/SAGE/data/kv-cache
+Environment=SAGE_NUM_CTX=65536
+Environment=SAGE_SEMANTIC_MEMORY=0
+Environment=SAGE_OLLAMA_KEEP_ALIVE=0
+```
+
+Run `systemctl --user daemon-reload && systemctl --user restart sage.service` after editing. Set `SAGE_LLAMA_CPP_SERVER_BIN` if `llama-server` is not on `PATH`. This mode uses one loaded GGUF model for all Sage chat lanes; Ollama remains available for vision and embeddings. On a 16 GB Ryzen 5 5600G system inference is CPU-bound, and a 64K context can consume substantial RAM and be slow. If startup fails or swaps heavily, lower `SAGE_NUM_CTX` consistently in both services (for example to `16384` or `32768`). The disk snapshot only speeds up reuse of an unchanged prompt prefix; restoring or writing a large snapshot also costs I/O and is not guaranteed to beat recomputation.
+
 ### Speaking while writing, first-token time, and replies by room
 
 Plain chat answers on the speaker start playing as soon as the first sentence is written (`SAGE_VOICE_STREAM=0` turns this off). Answers that use tools, code or reasoning notes are still spoken after they finish. The header chip and the sidebar show the average tokens per second and the average time to first token (warm replies only). With BLE presence on, timers and reminders are not also sent to Telegram while the beacon is in the speaker's room (`SAGE_SPEAKER_ROOM`, default `bedroom`); in any other room, or when away, they go to Telegram as before. Alarms always ring on the speaker. Send `/where` to the Telegram bot to see which room Sage thinks you are in.
