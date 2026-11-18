@@ -44,12 +44,12 @@ class PromptLayoutTests(unittest.TestCase):
         self.assertEqual(sent[3], {'role': 'system', 'content': 'Notes: it is Monday 10:42.'})
         self.assertEqual(sent[4], history[2])
 
-    def test_llamacpp_keeps_system_messages_at_the_start(self):
+    def test_llamacpp_preserves_positioned_system_context_after_history(self):
         messages = [
             {'role': 'system', 'content': f'{STATIC}\n\nProject notes.'},
             {'role': 'user', 'content': 'first question'},
             {'role': 'assistant', 'content': 'first answer'},
-            {'role': 'system', 'content': 'Current date: Monday.'},
+            {'role': 'system', 'content': '2026-11-18T11:00:00+01:00', '_sage_preserve_position': True},
             {'role': 'user', 'content': 'follow-up'},
         ]
         with patch.object(llm._config, 'LLM_BACKEND', 'llama_cpp'), patch.object(llm._config, 'CHAT_TURNS', 12):
@@ -57,8 +57,10 @@ class PromptLayoutTests(unittest.TestCase):
 
         self.assertEqual(sent[0]['role'], 'system')
         self.assertIn('Project notes.', sent[0]['content'])
-        self.assertIn('Current date: Monday.', sent[0]['content'])
-        self.assertEqual([message['role'] for message in sent[1:]], ['user', 'assistant', 'user'])
+        self.assertNotIn('2026-11-18', sent[0]['content'])
+        self.assertEqual(sent[1:3], messages[1:3])
+        self.assertEqual(sent[3], {'role': 'system', 'content': '2026-11-18T11:00:00+01:00'})
+        self.assertEqual(sent[4], messages[-1])
 
     def test_a_tool_loop_does_not_move_the_split_text(self):
         base = [{'role': 'system', 'content': f'{STATIC}\n\nNotes.'}, {'role': 'user', 'content': 'q'}]
@@ -171,19 +173,22 @@ class AgentPromptTests(unittest.TestCase):
         with patch('sage.agent._relevant_context', return_value=([{'role': 'user', 'content': 'old question'}], [{'content': 'a saved memory'}])), \
                 patch('sage.agent.project_context', return_value={'name': 'ROV'}):
             sent = self.ask('Explain how a ballast tank works', project_id=1)
-        self.assertEqual([m['role'] for m in sent], ['system', 'user'])
+        self.assertEqual([m['role'] for m in sent], ['system', 'system', 'user'])
         system = sent[0]['content']
         self.assertTrue(system.startswith(agent.SYSTEM))
-        order = [system.index(text) for text in ('active-project records', 'saved memories', 'historical conversation', 'CURRENT DATE AND TIME')]
+        order = [system.index(text) for text in ('active-project records', 'saved memories', 'historical conversation')]
         self.assertEqual(order, sorted(order))                                  # stable first, the clock last
+        self.assertRegex(sent[-2]['content'], r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$')
+        self.assertTrue(sent[-2]['_sage_preserve_position'])
 
     def test_past_messages_are_sent_as_a_conversation_when_enabled(self):
         for n in range(3):
             self.exchange(f'question {n}', f'answer {n}')
         with patch.object(config, 'CHAT_TURNS', 6), patch('sage.agent._relevant_context', return_value=([], [])) as retrieved:
             sent = self.ask('and a follow-up?')
-        self.assertEqual([m['role'] for m in sent], ['system'] + ['user', 'assistant'] * 3 + ['user'])
+        self.assertEqual([m['role'] for m in sent], ['system'] + ['user', 'assistant'] * 3 + ['system', 'user'])
         self.assertEqual([m['content'] for m in sent[1:7:2]], ['question 0', 'question 1', 'question 2'])
+        self.assertRegex(sent[-2]['content'], r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$')
         self.assertEqual(sent[-1]['content'], 'and a follow-up?')
         self.assertEqual(retrieved.call_args.kwargs['recent_limit'], 0)          # they are real messages now, not quoted again as context
 
@@ -199,8 +204,8 @@ class AgentPromptTests(unittest.TestCase):
         self.assertEqual(second[:n], first[:n])
         self.assertEqual([m['content'] for m in second[n:n + 2]], ['third question', 'ok'])
         for sent in (first, second):                                             # the changing text sits in front of the latest question
-            self.assertEqual(sent[-2]['role'], 'system')
-            self.assertIn('CURRENT DATE AND TIME', sent[-2]['content'])
+            self.assertEqual(sent[-3]['role'], 'system')
+            self.assertRegex(sent[-3]['content'], r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$')
             self.assertEqual(sent[-1]['role'], 'user')
 
     def test_the_window_moves_in_blocks_so_most_turns_keep_the_same_start(self):

@@ -69,6 +69,26 @@ class SchematicTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'coordinates must be finite'):
             schematic._validate_spec(invalid)
 
+    def test_generated_invalid_wire_anchor_gets_one_correction_attempt(self):
+        invalid = json.loads(json.dumps(self.spec))
+        invalid['wires'][0]['to']['anchor'] = 'base'
+        with patch('sage.schematic.llm.chat_message', side_effect=[
+                {'content': json.dumps(invalid)}, {'content': json.dumps(self.spec)}]) as model:
+            result = schematic._generate_spec('Connect a resistor to a voltage source')
+
+        self.assertEqual(result['wires'][0]['to']['anchor'], 'start')
+        self.assertEqual(model.call_count, 2)
+        self.assertIn('valid component anchor', model.call_args.args[0][1]['content'])
+
+    def test_generated_wire_anchor_error_is_reported_after_one_retry(self):
+        invalid = json.loads(json.dumps(self.spec))
+        invalid['wires'][0]['to']['anchor'] = 'base'
+        with patch('sage.schematic.llm.chat_message', return_value={'content': json.dumps(invalid)}) as model:
+            with self.assertRaisesRegex(ValueError, 'Wire to must name a valid component anchor'):
+                schematic._generate_spec('Connect a resistor to a voltage source')
+
+        self.assertEqual(model.call_count, 2)
+
     def test_generic_ic_pin_anchors_connect_to_motor_and_render(self):
         spec = {
             'components': [

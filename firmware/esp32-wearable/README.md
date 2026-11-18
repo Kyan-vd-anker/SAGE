@@ -48,6 +48,14 @@ In `menuconfig`, verify:
 - OLED SCL: `22`
 - OLED address: `0x3c`
 - Setup AP password
+- HFP Audio Gateway enabled, HFP Client disabled, and Wide Band Speech
+  disabled (CVSD narrowband compatibility mode)
+
+The wearable uses the HFP Audio Gateway role to connect to a headset. CVSD-only
+mode avoids codec negotiation with codecs the ESP-IDF 5.5 Bluetooth stack does
+not recognize. After flashing, confirm the log reaches `HFP state 3` (service
+level connection) and then reports an HFP audio connection. `Unknown Codec UUID`
+messages alone do not prove the connection failed.
 
 If GPIO0 is held while resetting, the ESP32 enters download mode. Release
 BOOT after reset and flash again.

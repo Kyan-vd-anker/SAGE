@@ -230,25 +230,35 @@ def _split_dynamic(messages):
 
 
 def _llamacpp_prompt(messages):
-    """Keep all system instructions in one leading message, as common llama.cpp chat templates require."""
+    """Combine ordinary system prompts while preserving explicitly positioned system context."""
     system = []
     rest = []
     for message in messages:
-        if message.get('role') == 'system':
+        if message.get('role') == 'system' and not message.get('_sage_preserve_position'):
             content = str(message.get('content') or '')
             if content.strip(): system.append(content)
+        elif message.get('_sage_preserve_position'):
+            rest.append({key: value for key, value in message.items() if key != '_sage_preserve_position'})
         else:
             rest.append(message)
-    if not system: return messages
+    if not system: return rest
     return [{'role': 'system', 'content': '\n\n'.join(system)}] + rest
 
 
 def _prepare(model, messages):
     """Arrange messages to maximize unchanged-prefix reuse by the selected backend."""
     if _config.LLM_BACKEND == 'llama_cpp': return _llamacpp_prompt(messages)
-    if _config.LLM_BACKEND == 'ollama' and _baked_current(model): return _baked(model, messages)
-    if _config.PROMPT_CACHE and _config.CHAT_TURNS > 0: return _split_dynamic(messages)
-    return messages
+    if _config.LLM_BACKEND == 'ollama' and _baked_current(model):
+        prepared = _baked(model, messages)
+    elif _config.PROMPT_CACHE and _config.CHAT_TURNS > 0:
+        prepared = _split_dynamic(messages)
+    else:
+        prepared = messages
+    return [
+        {key: value for key, value in message.items() if key != '_sage_preserve_position'}
+        if message.get('_sage_preserve_position') else message
+        for message in prepared
+    ]
 
 
 def _stable_tools(tools):
