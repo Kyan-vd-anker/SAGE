@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from sage import config, db, prototype, routes
+from sage import config, db, prototype, routes, schematic
 
 
 class PrototypeTests(unittest.TestCase):
@@ -63,6 +63,18 @@ class PrototypeTests(unittest.TestCase):
         self.assertEqual(revised['version']['plan']['summary'], 'Updated plan')
         self.assertEqual([item['version'] for item in prototype._design(created['design']['id'])['versions']], [2, 1])
         self.assertTrue(revised['version']['render_error'])
+
+    def test_generated_schematic_context_can_exceed_user_prompt_limit(self):
+        long_plan = dict(self.plan, assumptions=['a' * 500] * 10)
+        with patch('sage.prototype._generate_plan', return_value=long_plan), \
+                patch('sage.prototype._generate_firmware', return_value='void setup() {}\nvoid loop() {}\n'), \
+                patch('sage.schematic._generate_spec', return_value=self.schematic_spec) as generate_schematic, \
+                patch('sage.openscad._generated_source', return_value=self.source):
+            prototype._generate_package('Create a sensor prototype')
+
+        self.assertGreater(len(generate_schematic.call_args.args[0]), schematic.MAX_PROMPT_CHARS)
+        self.assertEqual(generate_schematic.call_args.kwargs['max_prompt_chars'],
+                         schematic.MAX_INTERNAL_PROMPT_CHARS)
 
     def test_version_route_returns_the_validated_artifact_package(self):
         with patch('sage.prototype._generate_package', return_value=self.package('Route test')), \

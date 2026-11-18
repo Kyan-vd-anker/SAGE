@@ -230,11 +230,11 @@ def _split_dynamic(messages):
 
 
 def _llamacpp_prompt(messages):
-    """Combine ordinary system prompts while preserving explicitly positioned system context."""
+    """Combine system prompts at the start, as required by llama.cpp chat templates."""
     system = []
     rest = []
     for message in messages:
-        if message.get('role') == 'system' and not message.get('_sage_preserve_position'):
+        if message.get('role') == 'system':
             content = str(message.get('content') or '')
             if content.strip(): system.append(content)
         elif message.get('_sage_preserve_position'):
@@ -483,6 +483,8 @@ class StreamCancel:
         self.conn = None
     @property
     def cancelled(self): return self.event.is_set()
+    def is_set(self): return self.cancelled
+    def set(self): self.cancel()
     def cancel(self):
         self.event.set()
         conn = self.conn
@@ -498,7 +500,7 @@ class StreamCancel:
 
 
 def chat_stream(messages, tools=None, max_tokens=None, on_token=None, cancel=None, timeout=600, model=None, num_ctx=None,
-                on_request=None, cache_session=True):
+                on_request=None, cache_session=True, options=None, stop=None):
     """Foreground chat that streams: on_token(text) is called for every piece of text as it is generated.
     Returns the finished assistant message (content and any tool_calls). `timeout` applies to silence
     between pieces, not to the whole reply."""
@@ -522,6 +524,16 @@ def chat_stream(messages, tools=None, max_tokens=None, on_token=None, cancel=Non
         if stable_tools: data['tools'] = stable_tools
         if max_tokens is not None: data['options'] = {"num_predict": max_tokens}
         data.setdefault('options', {})['num_ctx'] = context_window
+        if options:
+            for key in ('temperature', 'top_p', 'seed'):
+                if options.get(key) is not None:
+                    data['options'][key] = options[key]
+        if stop:
+            stops = [stop] if isinstance(stop, str) else [str(value) for value in stop][:4]
+            if _config.LLM_BACKEND == 'llama_cpp':
+                data['stop'] = stops
+            else:
+                data['options']['stop'] = stops
         if _config.LLM_BACKEND=='llama_cpp':
             return _llamacpp_stream(data,timeout,on_token,cancel,on_request=on_request,persist=cache_session)
         for attempt in range(2):

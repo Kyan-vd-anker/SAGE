@@ -163,7 +163,10 @@ def _generate_package(prompt, previous=None):
         'Represent microcontrollers and sensors as generic ic blocks with named pins. Represent motors with the motor symbol. '
         'Show separate motor power and a suitable driver when a motor is present. Use the specified candidate connections; do not invent ratings.'
     )
-    schematic_spec = schematic._generate_spec(circuit_prompt, previous.get('schematic_spec') if previous else None)
+    schematic_spec = schematic._generate_spec(
+        circuit_prompt, previous.get('schematic_spec') if previous else None,
+        max_prompt_chars=schematic.MAX_INTERNAL_PROMPT_CHARS,
+    )
     cad_prompt = (
         f'Create the mechanical enclosure or mounting parts needed for this prototype. User request:\n{prompt}\n\n'
         f'Prototype plan and components:\n{json.dumps(plan, ensure_ascii=False)}\n'

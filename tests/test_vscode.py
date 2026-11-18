@@ -9,7 +9,7 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
-from sage import config, db, server, vscode
+from sage import config, db, llm, server, vscode
 
 TOKEN = 'test-token'
 
@@ -48,7 +48,7 @@ def chat_events(text, thinking='', calls=None, done_reason='stop'):
 
 class Base(unittest.TestCase):
     def setUp(self):
-        for target, value in (('VSCODE_TOKEN', TOKEN), ('VSCODE_FIM', 'auto'), ('VSCODE_NUM_CTX', 8192), ('FAST_MODEL', 'local/sage-fast'),
+        for target, value in (('LLM_BACKEND', 'ollama'), ('VSCODE_TOKEN', TOKEN), ('VSCODE_FIM', 'auto'), ('VSCODE_NUM_CTX', 8192), ('FAST_MODEL', 'local/sage-fast'),
                               ('DEEP_MODEL', 'local/sage-coder'), ('REASONING_MODEL', 'local/sage-reason'), ('FAST_THINK', False),
                               ('DEEP_THINK', False), ('REASONING_THINK', True)):
             patcher = patch.object(config, target, value)
@@ -162,6 +162,7 @@ class ChatTests(Base):
         sent = fake.bodies('/api/chat')[1]['messages']
         self.assertEqual(sent[1]['tool_calls'], [{'function': {'name': 'read_file', 'arguments': {'path': 'a.py'}}}])
         self.assertEqual((sent[2]['role'], sent[2]['tool_name'], sent[2]['content']), ('tool', 'read_file', 'print(1)'))
+        self.assertEqual(sent[2]['tool_call_id'], call['id'])
 
     def test_a_request_that_would_be_silently_truncated_is_refused(self):
         fake = self.fake({'/api/chat': lambda body: chat_events('never')})
@@ -238,6 +239,46 @@ class ChatTests(Base):
         self.assertEqual((tool['index'], tool['function']['name']), (0, 'run'))
         self.assertEqual([c['choices'][0]['finish_reason'] for c in chunks if c['choices']][-1], 'tool_calls')
 
+    def test_chat_uses_llamacpp_when_it_is_the_configured_backend(self):
+        reply = {'role': 'assistant', 'content': 'answer', 'thinking': 'reasoning',
+                 'tool_calls': [{'id': 'call_1', 'type': 'function',
+                                 'function': {'name': 'lookup', 'arguments': '{"key":"value"}'}}],
+                 '_prompt_tokens': 20}
+        with patch.object(config, 'LLM_BACKEND', 'llama_cpp'), \
+                patch('sage.llm.chat_stream', return_value=reply) as chat_stream:
+            kind, status, result = self.chat(temperature=0.3, top_p=0.8, stop=['END'], seed=7)
+
+        self.assertEqual((kind, status), ('json', 200))
+        self.assertEqual(result['choices'][0]['message']['content'], 'answer')
+        self.assertEqual(result['choices'][0]['message']['reasoning_content'], 'reasoning')
+        self.assertEqual(result['choices'][0]['finish_reason'], 'tool_calls')
+        self.assertEqual(result['usage']['prompt_tokens'], 20)
+        self.assertEqual(chat_stream.call_args.kwargs['model'], config.DEEP_MODEL)
+        self.assertEqual(chat_stream.call_args.kwargs['options']['temperature'], 0.3)
+        self.assertEqual(chat_stream.call_args.kwargs['options']['top_p'], 0.8)
+        self.assertEqual(chat_stream.call_args.kwargs['stop'], ['END'])
+
+    def test_streaming_uses_llamacpp_and_preserves_usage_and_reasoning(self):
+        def fake_chat(messages, on_token=None, **kwargs):
+            on_token('answer')
+            return {'content': 'answer', 'thinking': 'reasoning', '_prompt_tokens': 12}
+
+        with patch.object(config, 'LLM_BACKEND', 'llama_cpp'), \
+                patch('sage.llm.chat_stream', side_effect=fake_chat):
+            kind, stream = vscode.handle(
+                'POST', '/v1/chat/completions',
+                {'stream': True, 'stream_options': {'include_usage': True},
+                 'messages': [{'role': 'user', 'content': 'hi'}]}, 'c',
+            )
+            chunks = [line for line in ''.join(stream).split('\n\n') if line]
+
+        self.assertEqual(kind, 'sse')
+        values = [json.loads(line[6:]) for line in chunks if line.startswith('data: {')]
+        self.assertIn('answer', ''.join(item['choices'][0]['delta'].get('content', '') for item in values if item['choices']))
+        self.assertIn('reasoning', ''.join(item['choices'][0]['delta'].get('reasoning_content', '') for item in values if item['choices']))
+        self.assertEqual(values[-1]['usage']['prompt_tokens'], 12)
+        self.assertEqual(chunks[-1], 'data: [DONE]')
+
 
 class InlineTests(Base):
     PREFIX = 'def add(a, b):\n    return '
@@ -300,6 +341,20 @@ class InlineTests(Base):
         fake = self.fake({'/api/chat': lambda body: chat_events('never')}, capabilities=None)
         self.assertEqual(self.inline(prefix='  ', suffix='')['text'], '')
         self.assertEqual(fake.calls, [])
+
+    def test_inline_uses_llamacpp_chat_without_probing_ollama_capabilities(self):
+        def fake_chat(messages, on_token=None, **kwargs):
+            on_token('a + b')
+            return {'content': 'a + b'}
+
+        with patch.object(config, 'LLM_BACKEND', 'llama_cpp'), \
+                patch('sage.vscode._capabilities', side_effect=AssertionError('must not probe Ollama')), \
+                patch('sage.llm.chat_stream', side_effect=fake_chat) as chat_stream:
+            result = self.inline()
+
+        self.assertEqual((result['text'], result['method']), ('a + b', 'chat'))
+        self.assertEqual(chat_stream.call_args.kwargs['model'], config.FAST_MODEL)
+        self.assertFalse(chat_stream.call_args.kwargs['cache_session'])
 
     def test_the_context_sent_to_the_model_is_bounded(self):
         fake = self.fake({'/api/chat': lambda body: chat_events('x')}, capabilities=None)
@@ -392,6 +447,12 @@ class EmbeddingTests(Base):
         self.assertEqual(body['inline'], {'lane': 'sage-fast', 'method': 'native', 'prefix_chars': 6000, 'suffix_chars': 1500})
         self.assertEqual(body['lanes']['sage-reason'], {'model': 'local/sage-reason', 'think': True})
 
+    def test_status_reports_chat_inline_for_llamacpp_without_contacting_ollama(self):
+        with patch.object(config, 'LLM_BACKEND', 'llama_cpp'), \
+                patch('sage.vscode._capabilities', side_effect=AssertionError('must not probe Ollama')):
+            _, _, body = vscode.handle('GET', '/api/vscode/status', {}, 'c')
+        self.assertEqual(body['inline']['method'], 'chat')
+
 
 class HttpTests(Base):
     """The same endpoints through the real server: token, login-cookie exemption, JSON errors and SSE framing."""
@@ -407,6 +468,7 @@ class HttpTests(Base):
         self.httpd = ThreadingHTTPServer(('127.0.0.1', 0), server.Handler)
         self.port = self.httpd.server_address[1]
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        self.addCleanup(llm.resume_background)
         self.addCleanup(self.httpd.server_close)
         self.addCleanup(self.httpd.shutdown)
 

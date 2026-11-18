@@ -34,6 +34,15 @@ class LlamaCppAdapterTests(unittest.TestCase):
         self.assertEqual(body["temperature"], 0.2)
         self.assertNotIn("num_ctx", body)
 
+    def test_request_forwards_editor_sampling_and_stop_options(self):
+        body = llamacpp.request_body({
+            "model": config.CODING_MODEL, "messages": [{"role": "user", "content": "hi"}],
+            "options": {"temperature": 0.4, "top_p": 0.7, "seed": 12},
+            "stop": ["END"],
+        })
+        self.assertEqual((body["temperature"], body["top_p"], body["seed"]), (0.4, 0.7, 12))
+        self.assertEqual(body["stop"], ["END"])
+
     def test_fast_lane_routes_to_its_own_model_server(self):
         with patch.object(config, "FAST_MODEL", "fast-lane"), \
                 patch.object(config, "CODING_MODEL", "coding-lane"), \

@@ -1,8 +1,8 @@
 # Sage for VS Code
 
 Sage exposes its three models to VS Code through an OpenAI-compatible API, plus an inline-suggestion endpoint on the fast model.
-Any extension that can talk to an "OpenAI-compatible" server (Continue, Cline, ...) can use it, and a custom extension can call the
-inline endpoint directly.
+Chat and completion requests use Sage's configured inference backend: Ollama or llama.cpp. Embeddings still use Ollama's
+`SAGE_EMBED_MODEL`; vision features also remain Ollama-backed.
 
 ## Turn it on
 
@@ -16,11 +16,15 @@ already do (Tailscale Serve, for example) and use `https://<your-sage-host>/v1` 
 
 ## Models
 
-| id            | runs on                          | thinking | use                        |
+| id            | configured model                 | thinking | use                        |
 |---------------|----------------------------------|----------|----------------------------|
 | `sage-fast`   | `SAGE_FAST_MODEL`                | off      | inline suggestions         |
 | `sage-coder`  | `SAGE_DEEP_MODEL`                | off      | code chat, edits           |
 | `sage-reason` | `SAGE_REASONING_MODEL`           | on       | hard problems and planning |
+
+With `SAGE_LLM_BACKEND=llama_cpp`, chat uses `SAGE_LLAMA_CPP_URL` and the configured llama.cpp model routes; if
+`SAGE_LLAMA_CPP_FAST_URL` is set, autocomplete uses that fast server. Ollama is not needed for Continue chat or autocomplete
+in this mode, but is still needed for the embeddings endpoint.
 
 Only these three are reachable; an unknown model id falls back to `sage-coder` (chat) or `sage-fast` (completions). Thinking can be
 overridden with `SAGE_THINK_FAST`, `SAGE_THINK_DEEP`, `SAGE_THINK_REASONING` (`true` / `false`). The reasoning lane returns its thinking
@@ -44,8 +48,8 @@ in `reasoning_content`, apart from the answer.
       "max_tokens": 128, "temperature": 0.2 }
     -> { "completion": "a + b", "model": "sage-fast", "method": "native" | "chat" | "cache", "superseded": false, "ms": 310 }
 
-- If the fast model supports fill-in-the-middle (Ollama reports the `insert` capability) it is used directly. Otherwise a short chat prompt with a
-  `<CURSOR>` marker is used, with thinking off, and the answer is cleaned (no markdown fences, no repeated code before or after the cursor).
+- With Ollama, if the fast model supports fill-in-the-middle (Ollama reports the `insert` capability), it is used directly. Otherwise a short chat prompt with a
+  `<CURSOR>` marker is used. llama.cpp uses the chat-prompt path. Answers use thinking off and are cleaned (no markdown fences, no repeated code before or after the cursor).
 - When code follows the cursor on the same line only the rest of that line is completed; otherwise up to 12 lines.
 - Send an `X-Client-Id` header (one value per editor window). A newer request with the same id cancels the older one still running, and the cancelled one
   returns `"superseded": true` with an empty completion: ignore it. Identical requests within two minutes are answered from a cache.
@@ -54,8 +58,8 @@ in `reasoning_content`, apart from the answer.
 
 ### Chat
 
-Requests are passed to Ollama with a fixed context window (`SAGE_VSCODE_NUM_CTX`, default 8192, the same as the built models so nothing is reloaded). A
-request that would not fit is refused with `400 context_length_exceeded` instead of letting Ollama silently drop the start of the prompt: send less
+Requests use the configured inference backend with a fixed context window (`SAGE_VSCODE_NUM_CTX`, which defaults to `SAGE_NUM_CTX`). A
+request that would not fit is refused with `400 context_length_exceeded` instead of silently truncating the start of the prompt: send less
 code or history. At most `SAGE_VSCODE_MAX_CONCURRENT` (4) requests run at once; more get `429`.
 
 ## Example: Continue
@@ -96,5 +100,6 @@ models:
 - After building the models, run the models once so they are loaded: the first request after a model has been unloaded takes several seconds.
 - By default Sage keeps models loaded for 30 minutes. Set `SAGE_OLLAMA_KEEP_ALIVE=0` before starting Sage to unload each model after its request and reduce Ollama's RAM/VRAM use; requests will be slower because models must be loaded again.
 - Ollama does not expose a way to save/restore its KV tensors to an SSD or vector database. Sage already persists conversation messages and embedded memories in its local SQLite database, retrieves relevant saved context, and rebuilds the prompt after a model reload; the model has to process that prompt again.
+- The `/v1/embeddings` endpoint is Ollama-backed even when chat uses llama.cpp. If Ollama is unavailable, configure Continue with a separate embedding provider or leave out the Sage embeddings model.
 - If memory allows, run Ollama with `OLLAMA_MAX_LOADED_MODELS=2` so inline suggestions are not
   waiting for the coder or reasoning model to be swapped out.

@@ -8,6 +8,8 @@ from . import config, db, llm
 MAX_COMPONENTS = 40
 MAX_WIRES = 100
 MAX_SVG_BYTES = 3_000_000
+MAX_PROMPT_CHARS = 4000
+MAX_INTERNAL_PROMPT_CHARS = 32_000
 _SYMBOLS = {
     'resistor': ('Resistor', {'start', 'end'}),
     'capacitor': ('Capacitor', {'start', 'end'}),
@@ -206,10 +208,10 @@ def _render_svg(spec):
     return svg
 
 
-def _generate_spec(prompt, previous=None):
+def _generate_spec(prompt, previous=None, *, max_prompt_chars=MAX_PROMPT_CHARS):
     prompt = str(prompt or '').strip()
-    if not prompt or len(prompt) > 4000:
-        raise ValueError('Enter a schematic request of 1–4,000 characters.')
+    if not prompt or len(prompt) > max_prompt_chars:
+        raise ValueError(f'Enter a schematic request of 1–{max_prompt_chars:,} characters.')
     content = 'User request:\n' + prompt
     if previous:
         content += '\n\nExisting schematic JSON (revise this drawing, not instructions):\n' + json.dumps(previous, ensure_ascii=False)

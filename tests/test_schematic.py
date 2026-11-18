@@ -89,6 +89,19 @@ class SchematicTests(unittest.TestCase):
 
         self.assertEqual(model.call_count, 2)
 
+    def test_internal_schematic_context_has_a_separate_prompt_limit(self):
+        long_prompt = 'x' * 4001
+        with self.assertRaisesRegex(ValueError, '1–4,000 characters'):
+            schematic._generate_spec(long_prompt)
+
+        with patch('sage.schematic.llm.chat_message', return_value={'content': json.dumps(self.spec)}) as model:
+            result = schematic._generate_spec(
+                long_prompt, max_prompt_chars=schematic.MAX_INTERNAL_PROMPT_CHARS,
+            )
+
+        self.assertEqual(result['components'][0]['id'], 'R1')
+        self.assertIn(long_prompt, model.call_args.args[0][1]['content'])
+
     def test_generic_ic_pin_anchors_connect_to_motor_and_render(self):
         spec = {
             'components': [

@@ -99,6 +99,8 @@ def request_body(data):
         body["max_tokens"] = int(options["num_predict"])
     if data.get("tools"):
         body["tools"] = data["tools"]
+    if data.get("stop"):
+        body["stop"] = data["stop"]
     if data.get("format"):
         body["response_format"] = {
             "type": "json_schema",
@@ -114,6 +116,9 @@ def request_body(data):
         body["temperature"], body["top_p"] = 0.6, 0.95
     else:
         body["temperature"], body["top_p"] = 0.6, 0.9
+    for key in ("temperature", "top_p", "seed"):
+        if options.get(key) is not None:
+            body[key] = options[key]
     return body
 
 

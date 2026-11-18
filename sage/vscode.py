@@ -23,6 +23,7 @@ the same editor cancels the one still running, because the earlier one is stale 
 """
 import http.client
 import json
+import queue
 import re
 import threading
 import time
@@ -156,6 +157,8 @@ def _capabilities(model):
 
 
 def _upstream_failure(exc):
+    if config.LLM_BACKEND == 'llama_cpp':
+        return ApiError(502, f'llama.cpp: {exc}', 'upstream_error')
     if isinstance(exc, UpstreamError):
         return ApiError(502 if exc.status >= 500 else 400 if exc.status == 400 else 502, f'Ollama: {exc}', 'upstream_error')
     return ApiError(503, f'Ollama is not reachable: {exc}', 'upstream_unavailable')
@@ -221,8 +224,11 @@ def to_ollama_messages(messages):
                         arguments = {}
                 calls.append({'function': {'name': function.get('name', ''), 'arguments': arguments if isinstance(arguments, dict) else {}}})
             item['tool_calls'] = calls
-        if role == 'tool' and message.get('name'):
-            item['tool_name'] = message['name']
+        if role == 'tool':
+            if message.get('name'):
+                item['tool_name'] = message['name']
+            if message.get('tool_call_id'):
+                item['tool_call_id'] = message['tool_call_id']
         out.append(item)
     return out
 
@@ -283,10 +289,53 @@ def _finish_reason(done_reason, tool_calls):
     return 'length' if done_reason == 'length' else 'stop'
 
 
+def _llamacpp_chat(upstream, on_token=None, cancel=None, cache_session=True):
+    from . import llm
+
+    options = upstream.get('options') or {}
+    try:
+        return llm.chat_stream(
+            upstream['messages'],
+            tools=upstream.get('tools'),
+            max_tokens=options.get('num_predict'),
+            on_token=on_token,
+            cancel=cancel,
+            model=upstream['model'],
+            num_ctx=options.get('num_ctx', config.VSCODE_NUM_CTX),
+            cache_session=cache_session,
+            options=options,
+            stop=options.get('stop'),
+        )
+    except (llm.OllamaError, llm.ToolsUnsupported) as exc:
+        raise _upstream_failure(exc) from exc
+
+
+def _estimated_usage(upstream, reply):
+    prompt = reply.get('_prompt_tokens')
+    if prompt is None:
+        prompt = _estimate_tokens(upstream['messages'], upstream.get('tools'), upstream['model'])
+    completion = sum(len(str(reply.get(key) or '')) for key in ('content', 'thinking')) // 3
+    return {'prompt_tokens': int(prompt), 'completion_tokens': completion, 'total_tokens': int(prompt) + completion}
+
+
 def chat(body):
     lane, upstream = _chat_request(body)
     _acquire_slot()
     try:
+        if config.LLM_BACKEND == 'llama_cpp':
+            reply = _llamacpp_chat(upstream)
+            content = reply.get('content') or None
+            message = {'role': 'assistant', 'content': content}
+            if reply.get('thinking'):
+                message['reasoning_content'] = reply['thinking']
+            tool_calls = _openai_tool_calls(reply.get('tool_calls'))
+            if tool_calls:
+                message['tool_calls'] = tool_calls
+            return ('json', 200, {'id': f'chatcmpl-{uuid.uuid4().hex[:24]}', 'object': 'chat.completion',
+                                  'created': int(time.time()), 'model': lane,
+                                  'choices': [{'index': 0, 'message': message,
+                                               'finish_reason': 'tool_calls' if tool_calls else 'stop'}],
+                                  'usage': _estimated_usage(upstream, reply)})
         content, thinking, calls, last = [], [], [], {}
         try:
             for event in events('/api/chat', upstream):
@@ -318,8 +367,74 @@ def _sse(value):
     return 'data: ' + (value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)) + '\n\n'
 
 
+def _llamacpp_chat_stream(lane, upstream, body):
+    from . import llm
+
+    _acquire_slot()
+    identity = f'chatcmpl-{uuid.uuid4().hex[:24]}'
+    created = int(time.time())
+    include_usage = bool((body.get('stream_options') or {}).get('include_usage'))
+
+    def chunk(delta, finish=None, usage=None):
+        value = {'id': identity, 'object': 'chat.completion.chunk', 'created': created, 'model': lane,
+                 'choices': [{'index': 0, 'delta': delta, 'finish_reason': finish}]}
+        if usage is not None:
+            value['usage'] = usage
+        return _sse(value)
+
+    def generate():
+        pending = queue.Queue()
+        cancel = llm.StreamCancel()
+
+        def run():
+            try:
+                reply = _llamacpp_chat(upstream, on_token=lambda text: pending.put(('content', text)), cancel=cancel)
+                pending.put(('reply', reply))
+            except Exception as exc:
+                pending.put(('error', exc))
+
+        worker = threading.Thread(target=run, daemon=True)
+        worker.start()
+        completed = False
+        try:
+            yield chunk({'role': 'assistant', 'content': ''})
+            while True:
+                kind, value = pending.get()
+                if kind == 'content':
+                    yield chunk({'content': value})
+                    continue
+                if kind == 'error':
+                    failure = value if isinstance(value, ApiError) else _upstream_failure(value)
+                    yield _sse(error_body(failure.message, failure.code))
+                    yield _sse('[DONE]')
+                    completed = True
+                    return
+                reply = value
+                if reply.get('thinking'):
+                    yield chunk({'reasoning_content': reply['thinking']})
+                tool_calls = _openai_tool_calls(reply.get('tool_calls'), with_index=True)
+                if tool_calls:
+                    yield chunk({'tool_calls': tool_calls})
+                usage = _estimated_usage(upstream, reply)
+                yield chunk({}, 'tool_calls' if tool_calls else 'stop')
+                if include_usage:
+                    yield _sse({'id': identity, 'object': 'chat.completion.chunk', 'created': created, 'model': lane,
+                                'choices': [], 'usage': usage})
+                yield _sse('[DONE]')
+                completed = True
+                return
+        finally:
+            if not completed:
+                cancel.cancel()
+                worker.join(timeout=1)
+
+    return ('sse', _Guarded(generate()))
+
+
 def chat_stream(body):
     lane, upstream = _chat_request(body)
+    if config.LLM_BACKEND == 'llama_cpp':
+        return _llamacpp_chat_stream(lane, upstream, body)
     _acquire_slot()
     identity = f'chatcmpl-{uuid.uuid4().hex[:24]}'
     created = int(time.time())
@@ -368,6 +483,8 @@ def chat_stream(body):
 # ------------------------------------------------------------------ inline completion
 
 def _supports_insert(model):
+    if config.LLM_BACKEND == 'llama_cpp':
+        return False
     if model in _NO_INSERT:
         return False
     mode = config.VSCODE_FIM
@@ -381,7 +498,9 @@ def _supports_insert(model):
 
 def _register(client):
     """A newer inline request from the same editor makes the one still running stale: cancel it."""
-    event = threading.Event()
+    from . import llm
+
+    event = llm.StreamCancel()
     with _INLINE_LOCK:
         previous = _INLINE.get(client)
         if previous is not None:
@@ -475,6 +594,23 @@ def inline_complete(prefix, suffix='', language='', path='', max_tokens=128, tem
                     raise _upstream_failure(exc)
             except Exception as exc:
                 raise _upstream_failure(exc)
+        if method is None and not cancel.is_set() and config.LLM_BACKEND == 'llama_cpp':
+            where = f'File: {path or "untitled"}' + (f' ({language})' if language else '')
+            upstream = {
+                'model': model,
+                'messages': [{'role': 'system', 'content': INLINE_SYSTEM},
+                             {'role': 'user', 'content': f'{where}\n\n{prefix}<CURSOR>{suffix}'}],
+                'options': {'num_predict': max_tokens, 'num_ctx': config.VSCODE_NUM_CTX,
+                            'temperature': temperature, 'top_p': 0.9, 'stop': stops},
+            }
+            try:
+                parts = []
+                _llamacpp_chat(upstream, on_token=parts.append, cancel=cancel, cache_session=False)
+                raw, method = ''.join(parts), 'chat'
+            except ApiError:
+                raise
+            except Exception as exc:
+                raise _upstream_failure(exc)
         if method is None and not cancel.is_set():
             where = f'File: {path or "untitled"}' + (f' ({language})' if language else '')
             body = {'model': model, 'stream': True, 'keep_alive': config.OLLAMA_KEEP_ALIVE, 'think': False, 'options': options,
@@ -556,7 +692,9 @@ def models():
 
 def status():
     table = lanes()
-    fim = 'off' if config.VSCODE_FIM == 'off' else ('native' if _supports_insert(table['sage-fast']['model']) else 'chat')
+    fim = ('chat' if config.LLM_BACKEND == 'llama_cpp' else
+           'off' if config.VSCODE_FIM == 'off' else
+           'native' if _supports_insert(table['sage-fast']['model']) else 'chat')
     return ('json', 200, {'ok': True, 'version': config.VERSION, 'num_ctx': config.VSCODE_NUM_CTX,
                           'lanes': {lane: {'model': v['model'], 'think': v['think']} for lane, v in table.items()},
                           'inline': {'lane': 'sage-fast', 'method': fim, 'prefix_chars': config.VSCODE_PREFIX_CHARS, 'suffix_chars': config.VSCODE_SUFFIX_CHARS}})
