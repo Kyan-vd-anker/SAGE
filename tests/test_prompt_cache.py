@@ -61,6 +61,28 @@ class PromptLayoutTests(unittest.TestCase):
         self.assertEqual(sent[1:3], messages[1:3])
         self.assertEqual(sent[3], messages[-1])
 
+    def test_llamacpp_keeps_only_the_fixed_part_in_the_system_message_and_folds_the_rest_into_the_latest_question(self):
+        messages = [
+            {'role': 'system', 'content': f'{STATIC}\n\nCore profile.{llm.CACHE_BREAK}Project notes.\nNo tool is needed.'},
+            {'role': 'user', 'content': 'first question'},
+            {'role': 'assistant', 'content': 'first answer'},
+            {'role': 'system', 'content': '2026-11-18T11:00:00+01:00', '_sage_preserve_position': True},
+            {'role': 'user', 'content': 'follow-up'},
+        ]
+        later = messages[:3] + [{'role': 'system', 'content': '2026-11-18T11:05:00+01:00', '_sage_preserve_position': True},
+                                {'role': 'user', 'content': 'follow-up'}]
+        with patch.object(llm._config, 'LLM_BACKEND', 'llama_cpp'), patch.object(llm._config, 'PROMPT_CACHE', True):
+            sent = llm._prepare('sage-fast', messages)
+            sent_later = llm._prepare('sage-fast', later)
+
+        self.assertEqual([message['role'] for message in sent], ['system', 'user', 'assistant', 'user'])
+        self.assertEqual(sent[0]['content'], f'{STATIC}\n\nCore profile.')
+        self.assertEqual(sent[1:3], messages[1:3])
+        self.assertIn('Project notes.', sent[3]['content'])
+        self.assertIn('2026-11-18T11:00:00', sent[3]['content'])
+        self.assertTrue(sent[3]['content'].endswith('LATEST USER MESSAGE:\nfollow-up'))
+        self.assertEqual(sent_later[:3], sent[:3])      # a new clock time changes nothing in front of the latest question
+
     def test_a_tool_loop_does_not_move_the_split_text(self):
         base = [{'role': 'system', 'content': f'{STATIC}\n\nNotes.'}, {'role': 'user', 'content': 'q'}]
         loop = base + [{'role': 'assistant', 'content': '', 'tool_calls': [{'function': {'name': 'x'}}]}, {'role': 'tool', 'content': 'r'}]
@@ -206,6 +228,22 @@ class AgentPromptTests(unittest.TestCase):
             self.assertEqual(sent[-3]['role'], 'system')
             self.assertRegex(sent[-3]['content'], r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$')
             self.assertEqual(sent[-1]['role'], 'user')
+
+    def test_llamacpp_prompt_keeps_the_conversation_as_an_unchanged_prefix_between_turns(self):
+        for n in range(2):
+            self.exchange(f'question {n}', f'answer {n}')
+        with patch.object(config, 'LLM_BACKEND', 'llama_cpp'), patch.object(config, 'PROMPT_CACHE', True), \
+                patch.object(config, 'CHAT_TURNS', 6), patch.object(config, 'CHAT_TURN_BLOCK', 3), \
+                patch('sage.agent._relevant_context', return_value=([], [])):
+            first = llm._prepare('sage-fast', self.ask('Explain how a ballast tank works'))
+            second = llm._prepare('sage-fast', self.ask('Explain how a trim tank works'))
+        self.assertEqual(first[0]['content'], agent.SYSTEM)                      # no core memories in this database
+        self.assertEqual(second[:5], first[:5])                                  # the fixed prompt and the two earlier exchanges
+        self.assertEqual([m['content'] for m in second[5:7]], ['Explain how a ballast tank works', 'ok'])
+        for sent in (first, second):
+            self.assertEqual(sent[-1]['role'], 'user')
+            self.assertIn('No tool is needed', sent[-1]['content'])
+            self.assertRegex(sent[-1]['content'], r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}')
 
     def test_the_window_moves_in_blocks_so_most_turns_keep_the_same_start(self):
         starts = []
