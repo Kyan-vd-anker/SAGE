@@ -44,7 +44,7 @@ class PromptLayoutTests(unittest.TestCase):
         self.assertEqual(sent[3], {'role': 'system', 'content': 'Notes: it is Monday 10:42.'})
         self.assertEqual(sent[4], history[2])
 
-    def test_llamacpp_preserves_positioned_system_context_after_history(self):
+    def test_llamacpp_combines_all_system_context_at_the_beginning(self):
         messages = [
             {'role': 'system', 'content': f'{STATIC}\n\nProject notes.'},
             {'role': 'user', 'content': 'first question'},
@@ -55,12 +55,11 @@ class PromptLayoutTests(unittest.TestCase):
         with patch.object(llm._config, 'LLM_BACKEND', 'llama_cpp'), patch.object(llm._config, 'CHAT_TURNS', 12):
             sent = llm._prepare('sage-fast', messages)
 
-        self.assertEqual(sent[0]['role'], 'system')
+        self.assertEqual([message['role'] for message in sent], ['system', 'user', 'assistant', 'user'])
         self.assertIn('Project notes.', sent[0]['content'])
-        self.assertNotIn('2026-11-18', sent[0]['content'])
+        self.assertIn('2026-11-18', sent[0]['content'])
         self.assertEqual(sent[1:3], messages[1:3])
-        self.assertEqual(sent[3], {'role': 'system', 'content': '2026-11-18T11:00:00+01:00'})
-        self.assertEqual(sent[4], messages[-1])
+        self.assertEqual(sent[3], messages[-1])
 
     def test_a_tool_loop_does_not_move_the_split_text(self):
         base = [{'role': 'system', 'content': f'{STATIC}\n\nNotes.'}, {'role': 'user', 'content': 'q'}]
