@@ -83,6 +83,27 @@ class PromptLayoutTests(unittest.TestCase):
         self.assertTrue(sent[3]['content'].endswith('LATEST USER MESSAGE:\nfollow-up'))
         self.assertEqual(sent_later[:3], sent[:3])      # a new clock time changes nothing in front of the latest question
 
+    def test_old_turns_are_dropped_to_fit_the_context_window_instead_of_failing(self):
+        messages = [{'role': 'system', 'content': STATIC}]
+        for n in range(10):
+            messages += [{'role': 'user', 'content': f'question {n} ' + 'x' * 3000}, {'role': 'assistant', 'content': f'answer {n} ' + 'y' * 3000}]
+        tail = [{'role': 'system', 'content': 'notes'}, {'role': 'user', 'content': 'latest question'}]
+        messages += tail
+        small = [{'role': 'system', 'content': STATIC}, {'role': 'user', 'content': 'hi'}, {'role': 'assistant', 'content': 'hello'}] + tail
+        other = [{'role': 'system', 'content': 'A different prompt.'}] + messages[1:]
+        with patch('sage.llm._static_prompt', return_value=STATIC), patch.object(llm._config, 'LLM_BACKEND', 'llama_cpp'):
+            self.assertFalse(llm._fit_conversation(small, None, 512, 8192, 'sage-fast'))
+            self.assertEqual(len(small), 5)
+            self.assertFalse(llm._fit_conversation(other, None, 512, 8192, 'sage-fast'))    # not a Sage chat prompt: left alone
+            self.assertEqual(len(other), len(messages))
+            self.assertTrue(llm._fit_conversation(messages, None, 512, 8192, 'sage-fast'))
+            used = llm._estimate_prompt_tokens(llm._prepare('sage-fast', messages), None, 'sage-fast')
+        self.assertLessEqual(used + 512, 8192)
+        self.assertEqual(messages[0]['content'], STATIC)
+        self.assertEqual(messages[-2:], tail)                       # this turn's context and the latest question stay
+        self.assertEqual(messages[1]['role'], 'user')               # the oldest turns went, the newest remain
+        self.assertTrue(messages[-3]['content'].startswith('answer 9'))
+
     def test_a_tool_loop_does_not_move_the_split_text(self):
         base = [{'role': 'system', 'content': f'{STATIC}\n\nNotes.'}, {'role': 'user', 'content': 'q'}]
         loop = base + [{'role': 'assistant', 'content': '', 'tool_calls': [{'function': {'name': 'x'}}]}, {'role': 'tool', 'content': 'r'}]

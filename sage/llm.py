@@ -38,6 +38,35 @@ def _check_context_window(messages,tools,max_tokens,num_ctx,model=None):
         )
 
 
+def _fit_conversation(messages, tools, max_tokens, num_ctx, model):
+    '''Make a Sage chat prompt fit the context window by dropping the oldest turns of the conversation instead of failing.
+
+    Only the transcript between the system prompt and the per-turn notes (or the latest question) is touched. The system prompt, the context
+    for this turn, the latest question and any tool rounds after it are never dropped. The list is changed in place, so a tool loop keeps the
+    shorter conversation in its later rounds. When turns have to go, trimming continues to about 70% of the space: the next turns then do not
+    each cut again, and the prompt cache (which needs an unchanged start) survives for a while. Returns True when something was dropped.'''
+    if not messages or messages[0].get('role') != 'system' or not str(messages[0].get('content') or '').startswith(_static_prompt()):
+        return False
+    last = _last_user_index(messages)
+    end = 1
+    while end < last and messages[end].get('role') in ('user', 'assistant'): end += 1
+    if end <= 1: return False
+    room = num_ctx - (max_tokens if max_tokens is not None else 512)
+    def size(): return _estimate_prompt_tokens(_prepare(model, messages), tools, model)
+    if size() <= room: return False
+    target = int(room * 0.7)
+    start = end
+    while end > 1 and size() > target:
+        del messages[1]
+        end -= 1
+    while end > 1 and messages[1].get('role') == 'assistant':   # never start the conversation with an answer whose question is gone
+        del messages[1]
+        end -= 1
+    if start == end: return False
+    print(f'Sage: the conversation was too long for the {num_ctx:,}-token window; dropped the {start - end} oldest messages.', flush=True)
+    return True
+
+
 _priority = threading.Condition()
 _chat_busy = False
 _foreground_waiters = 0
@@ -552,6 +581,7 @@ def chat_stream(messages, tools=None, max_tokens=None, on_token=None, cancel=Non
         factory = http.client.HTTPSConnection if url.scheme == 'https' else http.client.HTTPConnection
         think=_think_for_model(model)
         max_tokens=_thinking_output_limit(max_tokens,think)
+        if _fit_conversation(messages,stable_tools,max_tokens,context_window,model): prepared_messages=_prepare(model,messages)
         _check_context_window(prepared_messages,stable_tools,max_tokens,context_window,model)
         data = {"model": model, "messages": prepared_messages, "stream": True, "keep_alive": _config.OLLAMA_KEEP_ALIVE,
                 "think": think}
@@ -675,6 +705,7 @@ def chat_message(messages, tools=None, timeout=600, max_tokens=None, background=
         max_tokens=_thinking_output_limit(max_tokens,think)
         prepared_messages=_prepare(model,messages)
         stable_tools=_stable_tools(tools) if tools else None
+        if _fit_conversation(messages,stable_tools,max_tokens,_config.NUM_CTX,model): prepared_messages=_prepare(model,messages)
         _check_context_window(prepared_messages,stable_tools,max_tokens,_config.NUM_CTX,model)
         if background and not tools:
             return _background_request(messages, max_tokens, timeout, model)
